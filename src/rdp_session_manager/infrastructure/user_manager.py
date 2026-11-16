@@ -560,10 +560,13 @@ class UserManager:
         except KeyError:
             in_group = False
 
-        result['managed'] = in_group and actual_home == expected_home
-        if not in_group:
+        personal = self._load_personal_users().get(username) if self._is_personal_home(str(actual_home)) else None
+        is_live = bool(personal and personal.get('mode') == 'live')
+        result['managed'] = bool(personal) or (in_group and actual_home == expected_home)
+        result['personal'] = bool(personal)
+        if not in_group and not is_live:
             result['issues'].append(f"User is not in {self.RDP_GID_NAME}")
-        if actual_home != expected_home:
+        if actual_home != expected_home and not personal:
             result['issues'].append(
                 f"Unexpected home directory: {actual_home}"
             )
@@ -572,6 +575,14 @@ class UserManager:
         result['active'] = bool(processes)
         if processes:
             result['issues'].append('User has active processes')
+
+        if is_live:
+            from rdp_session_manager.infrastructure.live_desktop import is_live_rdp_running
+            result['session_type'] = 'live'
+            if personal.get('enabled') and not is_live_rdp_running(personal.get('backend') or None):
+                result['issues'].append('Live Desktop Sharing is enabled but its service is stopped')
+            result['healthy'] = not result['issues']
+            return result
 
         required = [
             actual_home / '.xsession',

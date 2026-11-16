@@ -232,15 +232,15 @@ class HealthService:
             checks.append(HealthCheck(
                 f"user.account:{user.username}", "user", user.username,
                 "healthy" if healthy else "critical",
-                "Managed user configuration is healthy" if healthy
-                else f"Managed user has {len(issues)} issue(s)",
+                "RDP user configuration is healthy" if healthy
+                else f"RDP user has {len(issues)} issue(s)",
                 {
                     "enabled": bool(getattr(user, "enabled", True)),
                     "connected": user.username in connected,
                     "issues": issues,
                     "session_type": diagnosis.get("session_type"),
                 },
-                "repair-user" if not healthy else "",
+                "repair-user" if not healthy and not diagnosis.get("personal") else "",
             ))
         return checks
 
