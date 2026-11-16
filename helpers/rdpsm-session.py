@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -91,6 +92,107 @@ def desktop_argv(profile: dict[str, Any]) -> list[str]:
     if desktop == "kde":
         return ["startplasma-x11"]
     return ["startxfce4"]
+
+
+def start_desktop(profile: dict[str, Any]) -> None:
+    desktop = profile.get("desktop_env", "xfce")
+    desktops = {
+        "gnome": ("GNOME-Flashback:GNOME", "gnome-flashback-metacity"),
+        "kde": ("KDE", "plasma"),
+        "xfce": ("XFCE", "xfce"),
+    }
+    if desktop not in desktops:
+        raise ValueError(f"unsupported desktop: {desktop}")
+    current, session = desktops[desktop]
+    os.environ.update({
+        "XDG_SESSION_TYPE": "x11",
+        "XDG_CURRENT_DESKTOP": current,
+        "XDG_SESSION_DESKTOP": "KDE" if desktop == "kde" else session,
+        "DESKTOP_SESSION": session,
+    })
+    os.environ.pop("WAYLAND_DISPLAY", None)
+    if desktop == "gnome" and not Path(
+        "/usr/share/gnome-session/sessions/gnome-flashback-metacity.session"
+    ).is_file():
+        raise RuntimeError(
+            "GNOME Flashback X11 session is missing. "
+            "Run 'rdpsm de install gnome' before reconnecting."
+        )
+    argv = desktop_argv(profile)
+    if not shutil.which(argv[0]):
+        raise RuntimeError(f"Desktop executable is missing: {argv[0]}")
+    update_activation_environment(dict(os.environ))
+    audit("desktop_start", desktop=desktop)
+    os.execvp(argv[0], argv)
+
+
+def update_activation_environment(environment: dict[str, str]) -> None:
+    """D-Bus activated portals must see the same display as the RDP client."""
+    updater = shutil.which("dbus-update-activation-environment")
+    if not updater or not environment.get("DBUS_SESSION_BUS_ADDRESS"):
+        return
+    names = [name for name in (
+        "DISPLAY", "XAUTHORITY", "XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP",
+        "XDG_SESSION_TYPE", "DESKTOP_SESSION",
+    ) if name in environment]
+    try:
+        result = subprocess.run(
+            [updater, "--systemd", *names], env=environment, timeout=5, check=False,
+        )
+        if result.returncode:
+            audit("activation_environment_update_failed", return_code=result.returncode)
+    except (OSError, subprocess.SubprocessError) as exc:
+        audit("activation_environment_update_failed", message=str(exc))
+
+
+def client_windows(environment: dict[str, str]) -> set[str]:
+    """Read only clients on this connection's X display, never other sessions."""
+    result = subprocess.run(
+        ["xprop", "-root", "_NET_CLIENT_LIST"],
+        env=environment, capture_output=True, text=True, timeout=2, check=True,
+    )
+    # An unset property is normal while Openbox or an application is starting.
+    return {window for window in re.findall(r"0x[0-9a-fA-F]+", result.stdout)
+            if int(window, 16)}
+
+
+def wait_native_application(
+    app: subprocess.Popen, wm: subprocess.Popen, environment: dict[str, str],
+) -> int:
+    """A launcher exiting successfully does not mean its GUI has closed."""
+    seen_window = False
+    empty_since = None
+    launcher_exit_at = None
+    while True:
+        code = app.poll()
+        if code is not None and code != 0:
+            return code
+        wm_code = wm.poll()
+        if wm_code is not None:
+            audit("window_manager_exit", return_code=wm_code)
+            raise RuntimeError(f"Openbox exited unexpectedly ({wm_code})")
+        try:
+            windows = client_windows(environment)
+        except (OSError, subprocess.SubprocessError) as exc:
+            audit("window_query_failed", message=str(exc))
+            raise RuntimeError("Cannot monitor RemoteApp X11 windows; check xprop and DISPLAY") from exc
+        now = time.monotonic()
+        if windows:
+            seen_window = True
+            empty_since = None
+        elif seen_window:
+            if empty_since is None:
+                empty_since = now
+            elif now - empty_since >= 1:
+                audit("application_windows_closed")
+                return code if code is not None else 0
+        elif code == 0:
+            if launcher_exit_at is None:
+                launcher_exit_at = now
+            elif now - launcher_exit_at >= 15:
+                audit("application_no_window", return_code=code)
+                return code
+        time.sleep(0.25)
 
 
 def write_openbox_config(home: Path) -> Path:
@@ -244,6 +346,10 @@ def runtime_argv(profile: dict[str, Any], home: Path) -> list[str]:
     app = command_argv(profile)
     if profile.get("profile_type") != "winege-remoteapp":
         return app
+    if profile.get('windows_app_id') and profile.get('runtime') == 'managed':
+        if not app:
+            raise ValueError('Managed Windows application launcher is missing')
+        return app
     if not app:
         app_path = home / ".winege_app_path"
         if app_path.exists():
@@ -286,11 +392,20 @@ def runtime_argv(profile: dict[str, Any], home: Path) -> list[str]:
     raise RuntimeError(f"unsupported Windows runtime: {runtime}")
 
 
-def terminate_group(process: subprocess.Popen, grace: float = 5.0) -> None:
-    if process.poll() is not None:
+def terminate_group(
+    process: subprocess.Popen, grace: float = 5.0, descendants: bool = False,
+) -> None:
+    if process.poll() is not None and not descendants:
         return
     try:
         os.killpg(process.pid, signal.SIGTERM)
+        if descendants:
+            deadline = time.monotonic() + grace
+            while time.monotonic() < deadline:
+                process.poll()  # Reap the leader before testing its group.
+                os.killpg(process.pid, 0)
+                time.sleep(0.05)
+            os.killpg(process.pid, signal.SIGKILL)
         process.wait(timeout=grace)
     except subprocess.TimeoutExpired:
         os.killpg(process.pid, signal.SIGKILL)
@@ -330,6 +445,15 @@ def run_remoteapp(profile: dict[str, Any], home: Path) -> int:
             "WINEPREFIX": environment.get("WINEPREFIX", str(home / ".wine")),
         }
     )
+    native = profile.get("profile_type") == "remoteapp"
+    if native:
+        environment.update({
+            "XDG_SESSION_TYPE": "x11", "XDG_CURRENT_DESKTOP": "Openbox",
+            "DESKTOP_SESSION": "openbox",
+        })
+        environment.pop("WAYLAND_DISPLAY", None)
+        if not shutil.which("xprop"):
+            raise RuntimeError("xprop is required to supervise Linux RemoteApps")
     shared_runtime_root = Path("/opt/rdp-session-manager/runtimes")
     if profile.get("profile_type") == "winege-remoteapp" and shared_runtime_root.is_dir():
         environment.setdefault("XDG_DATA_HOME", str(shared_runtime_root))
@@ -341,6 +465,8 @@ def run_remoteapp(profile: dict[str, Any], home: Path) -> int:
     if not cwd.is_dir():
         raise ValueError(f"working directory does not exist: {cwd}")
 
+    if native:
+        update_activation_environment(environment)
     wm = subprocess.Popen(
         ["openbox", "--config-file", str(write_openbox_config(home))],
         start_new_session=True,
@@ -373,7 +499,7 @@ def run_remoteapp(profile: dict[str, Any], home: Path) -> int:
             selected_app and not _is_application_executable(Path(selected_app[0]))
         )
         app = subprocess.Popen(argv, cwd=str(cwd), env=environment, start_new_session=True)
-        return_code = app.wait()
+        return_code = wait_native_application(app, wm, environment) if native else app.wait()
         if return_code == 0 and profile.get("profile_type") == "winege-remoteapp":
             selected = promote_installed_executable(
                 home,
@@ -410,7 +536,7 @@ def run_remoteapp(profile: dict[str, Any], home: Path) -> int:
         return return_code
     finally:
         if app is not None:
-            terminate_group(app)
+            terminate_group(app, descendants=native)
         terminate_group(wm, grace=2)
         if profile.get("profile_type") == "winege-remoteapp":
             wineserver = shutil.which("wineserver")
@@ -427,7 +553,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         profile = select_profile(load_profiles(home), arguments[0] if arguments else "")
         if profile.get("profile_type", "desktop") == "desktop":
-            os.execvp(desktop_argv(profile)[0], desktop_argv(profile))
+            start_desktop(profile)
         return run_remoteapp(profile, home)
     except Exception as exc:
         audit("session_error", error_type=type(exc).__name__, message=str(exc))
@@ -448,4 +574,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    def stop_session(signum, _frame):
+        audit("session_signal", signal=signum)
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, stop_session)
+    signal.signal(signal.SIGINT, stop_session)
     raise SystemExit(main())

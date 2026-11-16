@@ -1,0 +1,56 @@
+name: Quality Checks
+on:
+  pull_request:
+  push:
+    branches: [master, main, develop]
+permissions:
+  contents: read
+jobs:
+  python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-gi python3-gi-cairo python3-psutil python3-rich python3-venv python3-setuptools python3-wheel gir1.2-gtk-4.0 gir1.2-adw-1 xvfb xauth imagemagick
+          python3 -m venv --system-site-packages /tmp/rdpsm-ci
+          /tmp/rdpsm-ci/bin/pip install -r installer/requirements.txt
+          echo "/tmp/rdpsm-ci/bin" >> "$GITHUB_PATH"
+      - run: |
+          python3 -m compileall -q src helpers tests installer
+          find helpers installer tests -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+          python3 -m unittest discover -s tests -v
+          bash tests/test_installer_bootstrap.sh
+          python3 setup.py bdist_wheel
+      - run: xvfb-run -a env GDK_BACKEND=x11 GSETTINGS_BACKEND=memory python3 tests/e2e/gtk_smoke.py
+  native-packages:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - family: debian
+            image: debian:13
+          - family: arch
+            image: archlinux:base
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir -p artifacts/packages
+      - run: >-
+          docker run --rm -v "$PWD:/source:ro" -v "$PWD/artifacts/packages:/out"
+          ${{ matrix.image }} bash /source/tests/integration/native-package.sh ${{ matrix.family }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.family }}
+          path: artifacts/packages/*
+          retention-days: 7
+  website:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm ci && npm run build && npm run verify
+        working-directory: website

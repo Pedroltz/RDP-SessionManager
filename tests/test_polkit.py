@@ -6,9 +6,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from utils import polkit
+from rdp_session_manager.infrastructure import polkit
 
 
 class TestPrivilegeSelection(unittest.TestCase):
@@ -19,9 +19,9 @@ class TestPrivilegeSelection(unittest.TestCase):
     def tearDown(self):
         polkit.set_cli_mode(self.original_cli_mode)
 
-    @patch("utils.polkit.is_wsl", return_value=False)
-    @patch("utils.polkit.shutil.which", return_value="/usr/bin/pkexec")
-    @patch.dict("utils.polkit.os.environ", {}, clear=True)
+    @patch("rdp_session_manager.infrastructure.polkit.is_wsl", return_value=False)
+    @patch("rdp_session_manager.infrastructure.polkit.shutil.which", return_value="/usr/bin/pkexec")
+    @patch.dict("rdp_session_manager.infrastructure.polkit.os.environ", {}, clear=True)
     def test_headless_system_uses_interactive_terminal_sudo(self, _which, _wsl):
         method, command = polkit.get_privilege_command()
 
@@ -31,16 +31,16 @@ class TestPrivilegeSelection(unittest.TestCase):
         self.assertNotIn("-S", command)
         self.assertNotIn("-A", command)
 
-    @patch("utils.polkit.is_wsl", return_value=False)
-    @patch("utils.polkit.shutil.which", return_value="/usr/bin/pkexec")
-    @patch.dict("utils.polkit.os.environ", {"DISPLAY": ":0"}, clear=True)
+    @patch("rdp_session_manager.infrastructure.polkit.is_wsl", return_value=False)
+    @patch("rdp_session_manager.infrastructure.polkit.shutil.which", return_value="/usr/bin/pkexec")
+    @patch.dict("rdp_session_manager.infrastructure.polkit.os.environ", {"DISPLAY": ":0"}, clear=True)
     def test_display_without_session_bus_uses_sudo(self, _which, _wsl):
         self.assertEqual(polkit.get_privilege_command(), ("sudo", ["sudo"]))
 
-    @patch("utils.polkit.is_wsl", return_value=False)
-    @patch("utils.polkit.shutil.which", return_value="/usr/bin/pkexec")
+    @patch("rdp_session_manager.infrastructure.polkit.is_wsl", return_value=False)
+    @patch("rdp_session_manager.infrastructure.polkit.shutil.which", return_value="/usr/bin/pkexec")
     @patch.dict(
-        "utils.polkit.os.environ",
+        "rdp_session_manager.infrastructure.polkit.os.environ",
         {
             "DISPLAY": ":0",
             "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
@@ -53,10 +53,10 @@ class TestPrivilegeSelection(unittest.TestCase):
             ("pkexec", ["pkexec", "--user", "root"]),
         )
 
-    @patch("utils.polkit.is_wsl", return_value=False)
-    @patch("utils.polkit.shutil.which", return_value="/usr/bin/pkexec")
+    @patch("rdp_session_manager.infrastructure.polkit.is_wsl", return_value=False)
+    @patch("rdp_session_manager.infrastructure.polkit.shutil.which", return_value="/usr/bin/pkexec")
     @patch.dict(
-        "utils.polkit.os.environ",
+        "rdp_session_manager.infrastructure.polkit.os.environ",
         {
             "DISPLAY": ":0",
             "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
@@ -68,10 +68,10 @@ class TestPrivilegeSelection(unittest.TestCase):
 
         self.assertEqual(polkit.get_privilege_command(), ("sudo", ["sudo"]))
 
-    @patch("utils.polkit.is_wsl", return_value=True)
-    @patch("utils.polkit.shutil.which", return_value="/usr/bin/pkexec")
+    @patch("rdp_session_manager.infrastructure.polkit.is_wsl", return_value=True)
+    @patch("rdp_session_manager.infrastructure.polkit.shutil.which", return_value="/usr/bin/pkexec")
     @patch.dict(
-        "utils.polkit.os.environ",
+        "rdp_session_manager.infrastructure.polkit.os.environ",
         {
             "DISPLAY": ":0",
             "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",

@@ -4,14 +4,11 @@
 
 set -Eeuo pipefail
 
-DESKTOPS_TO_TEST=("${1:-xfce}" "${2:-gnome}" "${3:-kde}")
-# Filter empty parameters if fewer than 3 were supplied
-DESKTOPS=()
-for de in "${DESKTOPS_TO_TEST[@]}"; do
-    if [ -n "${de}" ]; then
-        DESKTOPS+=("${de}")
-    fi
-done
+if (($#)); then
+    DESKTOPS=("$@")
+else
+    DESKTOPS=(xfce gnome kde)
+fi
 
 DISPLAY_NUMBER="${RDPSM_E2E_DISPLAY:-:99}"
 SCREEN_SIZE="${RDPSM_E2E_SCREEN_SIZE:-1280x720}"
@@ -35,7 +32,7 @@ if ! command -v rdpsm >/dev/null 2>&1; then
     cat > /tmp/rdpsm <<WRAPPEREOF
 #!/bin/bash
 export PYTHONPATH="${SCRIPT_DIR}/src:\${PYTHONPATH}"
-exec python3 "${SCRIPT_DIR}/src/cli.py" "\$@"
+exec python3 "${SCRIPT_DIR}/src/rdp_session_manager/presentation/cli/__main__.py" "\$@"
 WRAPPEREOF
     chmod +x /tmp/rdpsm
     export PATH="/tmp:${PATH}"
@@ -103,7 +100,7 @@ test_single_desktop() {
 
     # 1. Check/Install Desktop Environment if needed
     log "Checking desktop installation status for ${de}..."
-    if ! rdpsm de list | grep -i "${de}" | grep -q "Installed: Yes\|sim\|True"; then
+    if ! rdpsm de check "${de}"; then
         log "Installing desktop environment ${de}..."
         rdpsm de install "${de}" || fail "Failed to install desktop environment ${de}"
     else

@@ -1,0 +1,98 @@
+{
+  "date": "2026-10-26",
+  "unit_integration_architecture_tests": {
+    "run": 270,
+    "result": "passed"
+  },
+  "e2e": {
+    "pending": [
+      "KDE: startplasma-x11 is absent",
+      "Snap: runtime absent"
+    ],
+    "baseline_users": 45,
+    "desktops": {
+      "exit_code": 0,
+      "seconds": 26.3
+    },
+    "remoteapps": {
+      "exit_code": 0,
+      "seconds": 8.0
+    },
+    "audit": {
+      "exit_code": 0,
+      "seconds": 2.5
+    },
+    "windows": {
+      "exit_code": 0,
+      "seconds": 28.1
+    },
+    "load": {
+      "exit_code": 1,
+      "seconds": 118.7
+    },
+    "remaining_test_users": []
+  },
+  "native_packages": {
+    "debian": {
+      "exit_code": 0
+    },
+    "arch": {
+      "exit_code": 0
+    }
+  },
+  "host_capacity_limit": {
+    "max_sessions": 7,
+    "passed_stage": 5,
+    "failed_stage": 10,
+    "not_run_stage": 25
+  },
+  "gtk_checkout_ms": 2076,
+  "gtk_installed_ms": 517,
+  "website": "build and static verification passed",
+  "windows_fixture_sha256": "2ed415d1a025deec35119f776cede60e0500dc0dd8e2a32e4e1f201d26691160",
+  "not_run": [
+    "KDE: missing startplasma-x11",
+    "Snap runtime absent",
+    "Flatpak org.gnome.Calculator absent",
+    "UMU/Proton graphical acceptance"
+  ],
+  "final_cleanup": {
+    "temporary_accounts": [],
+    "temporary_processes": [],
+    "xrdp": "active",
+    "xrdp-sesman": "active"
+  },
+  "repository_layout_history": [
+    {
+      "package": "rdp_session_manager/",
+      "application_src_removed": true,
+      "wheel": "passed",
+      "sdist": "passed",
+      "gtk_checkout": "passed",
+      "gtk_installed_outside_checkout": "passed",
+      "windows_rdp": "passed",
+      "native_packages": {
+        "debian": {
+          "exit_code": 0
+        },
+        "arch": {
+          "exit_code": 0
+        }
+      }
+    }
+  ],
+  "repository_layout": {
+    "package": "src/rdp_session_manager/",
+    "single_implementation": true,
+    "obsolete_modules_removed": true,
+    "tests": {
+      "run": 270,
+      "result": "passed"
+    },
+    "wheel": "passed",
+    "sdist": "passed",
+    "gtk_checkout": "passed",
+    "native_package_scripts": "updated; prior native package runs recorded above",
+    "gtk_installed_outside_checkout": "passed"
+  }
+}

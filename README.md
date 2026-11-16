@@ -7,7 +7,7 @@
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.9%2B-3776ab?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.9 or later"></a>
   <a href="https://www.gtk.org/"><img src="https://img.shields.io/badge/GTK-4-78c2ad?style=for-the-badge&logo=gnome&logoColor=white" alt="GTK 4"></a>
   <a href="https://pedroltz.github.io/rdp-session-manager/"><img src="https://img.shields.io/badge/website-live-09090b?style=for-the-badge&logo=astro&logoColor=FF5D01" alt="Official Website"></a>
-  <a href="https://github.com/Pedroltz/rdp-session-manager/actions"><img src="https://img.shields.io/github/actions/workflow/status/Pedroltz/rdp-session-manager/quality-checks.yml?style=for-the-badge&label=quality%20checks" alt="Quality checks"></a>
+  <a href="https://github.com/Pedroltz/rdp-session-manager/actions"><img src="https://img.shields.io/github/actions/workflow/status/Pedroltz/rdp-session-manager/quality.yml?style=for-the-badge&label=quality%20checks" alt="Quality checks"></a>
   <a href="https://github.com/Pedroltz/rdp-session-manager/releases"><img src="https://img.shields.io/github/v/release/Pedroltz/rdp-session-manager?style=for-the-badge&color=9b8cff" alt="Latest release"></a>
   <br><br>
   <p><code>Linux</code> &nbsp;•&nbsp; <code>GTK 4</code> &nbsp;•&nbsp; <code>libadwaita</code> &nbsp;•&nbsp; <code>xrdp</code> &nbsp;•&nbsp; <code>RemoteApp</code></p>
@@ -68,7 +68,7 @@ From a development clone with the required dependencies installed:
 You can also start the graphical interface directly:
 
 ```bash
-python3 src/main.py
+./run.sh
 ```
 
 Command-line usage and available commands are documented in the [CLI reference](docs/CLI.md).
@@ -92,3 +92,22 @@ Contributions are welcome. Fork the repository, create a focused branch, and ope
 ## License
 
 This project is licensed under the [GNU General Public License v3.0](LICENSE).
+
+A implementação está organizada em camadas em `src/rdp_session_manager`. Consulte
+[arquitetura](docs/ARCHITECTURE.md), [validação](tests/README.md) e
+[relatório da reorganização](docs/REFACTOR_REPORT.md).
+
+A organização atual do repositório é:
+
+```text
+src/rdp_session_manager/  # aplicação em camadas
+helpers/                  # operações privilegiadas e launchers
+installer/                # instalação e empacotamento
+data/                     # interfaces, políticas e receitas
+tests/                    # testes e fixtures
+docs/                     # documentação
+website/                  # site
+```
+
+A aplicação tem uma única implementação em `src/rdp_session_manager/`. Para iniciar pelo checkout,
+use `./run.sh` ou `PYTHONPATH=src python3 -m rdp_session_manager.presentation.cli --help`.

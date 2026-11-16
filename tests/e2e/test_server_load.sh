@@ -19,20 +19,35 @@ WORK_DIR="$(mktemp -d -t rdpsm-load-XXXXXX)"
 XVFB_PID=""
 declare -a USERS=()
 declare -a CLIENT_PIDS=()
+declare -a USER_UIDS=()
 
 mkdir -p "$ARTIFACTS"
 
 cleanup() {
+    local result=$?
     set +e
     for pid in "${CLIENT_PIDS[@]:-}"; do
         kill "$pid" 2>/dev/null
     done
     [[ -n "$XVFB_PID" ]] && kill "$XVFB_PID" 2>/dev/null
     for username in "${USERS[@]:-}"; do
-        PYTHONPATH="$ROOT_DIR/src" python3 "$ROOT_DIR/src/cli.py" \
-            user delete "$username" --force >/dev/null 2>&1 || true
+        if getent passwd "$username" >/dev/null; then
+            PYTHONPATH="$ROOT_DIR/src" python3 "$ROOT_DIR/src/rdp_session_manager/presentation/cli/__main__.py" \
+                user delete "$username" --force >/dev/null 2>&1 || result=1
+        fi
+        if getent passwd "$username" >/dev/null; then
+            echo "Cleanup failed: account $username remains" >&2
+            result=1
+        fi
+    done
+    for uid in "${USER_UIDS[@]}"; do
+        if pgrep -u "$uid" >/dev/null; then
+            echo "Cleanup failed: processes for temporary UID $uid remain" >&2
+            result=1
+        fi
     done
     rm -rf "$WORK_DIR"
+    exit "$result"
 }
 trap cleanup EXIT
 
@@ -49,15 +64,26 @@ for _ in $(seq 1 40); do
 done
 xdpyinfo >/dev/null
 
+check_memory() {
+    local memory_percent
+    memory_percent="$(free | awk '/Mem:/ {printf "%.0f", $3/$2*100}')"
+    ((memory_percent < 85)) || {
+        echo "Host memory reached ${memory_percent}%; stopping load test" >&2
+        exit 1
+    }
+}
+
 create_until() {
     local target="$1"
     while ((${#USERS[@]} < target)); do
         local index="${#USERS[@]}"
         local username="${RUN_ID}_${index}"
-        PYTHONPATH="$ROOT_DIR/src" python3 "$ROOT_DIR/src/cli.py" user create \
+        check_memory
+        USERS+=("$username")
+        PYTHONPATH="$ROOT_DIR/src" python3 "$ROOT_DIR/src/rdp_session_manager/presentation/cli/__main__.py" user create \
             "$username" --password "$PASSWORD" --session-type remoteapp \
             --app-command "$APP" >"$ARTIFACTS/create-$username.log" 2>&1
-        USERS+=("$username")
+        USER_UIDS+=("$(id -u "$username")")
         local marker="/opt/rdp-users/$username/.rdpsm-load-ready"
         sed -i "/exec \\/usr\\/bin\\/python3/i touch '$marker'" \
             "/opt/rdp-users/$username/.xsession"
@@ -69,9 +95,11 @@ create_until() {
 }
 
 for target in $STAGES; do
+    check_memory
     create_until "$target"
     deadline=$((SECONDS + 90))
     while ((SECONDS < deadline)); do
+        check_memory
         ready=0
         for username in "${USERS[@]}"; do
             [[ -f "/opt/rdp-users/$username/.rdpsm-load-ready" ]] && ((ready += 1))
@@ -88,7 +116,7 @@ for target in $STAGES; do
         echo "Host memory reached ${memory_percent}% at $target sessions" >&2
         exit 1
     }
-    PYTHONPATH="$ROOT_DIR/src" python3 "$ROOT_DIR/src/cli.py" \
+    PYTHONPATH="$ROOT_DIR/src" python3 "$ROOT_DIR/src/rdp_session_manager/presentation/cli/__main__.py" \
         server status --format json >"$ARTIFACTS/status-$target.json"
     printf 'stage=%s ready=%s memory_percent=%s\n' \
         "$target" "$ready" "$memory_percent"

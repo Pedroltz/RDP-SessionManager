@@ -34,6 +34,16 @@ cleanup() {
     set +e
     [ -z "${RDP_PID}" ] || kill "${RDP_PID}" 2>/dev/null
     [ -z "${XVFB_PID}" ] || kill "${XVFB_PID}" 2>/dev/null
+    rdpsm windows-app status "${USERNAME}" --format json >"${ARTIFACTS}/final-state.json" 2>/dev/null
+    if [ -f "/opt/rdp-users/${USERNAME}/.rdpsm-acceptance.log" ]; then
+        cp "/opt/rdp-users/${USERNAME}/.rdpsm-acceptance.log" "${ARTIFACTS}/dispatcher.log"
+    fi
+    if [ -f "/opt/rdp-users/${USERNAME}/.xsession-errors" ]; then
+        cp "/opt/rdp-users/${USERNAME}/.xsession-errors" "${ARTIFACTS}/session.log"
+    fi
+    if [ -d "/opt/rdp-users/${USERNAME}/.local/share/rdp-session-manager/windows-apps" ]; then
+        find "/opt/rdp-users/${USERNAME}/.local/share/rdp-session-manager/windows-apps" -name '*.log' -exec cp '{}' "${ARTIFACTS}/" \;
+    fi
     rdpsm user delete "${USERNAME}" --force >/dev/null 2>&1
 }
 trap cleanup EXIT
@@ -42,12 +52,8 @@ log "Creating disposable RDP user"
 rdpsm user create "${USERNAME}" --password "${PASSWORD}" \
     --session-type remoteapp --app-command xfce4-terminal
 
-PROFILE_ID="$(
-    rdpsm profile add "${USERNAME}" --name "Windows fixture" \
-        --session-type remoteapp --app-command xfce4-terminal |
-    sed -n 's/.*ID: \([^)]*\).*/\1/p'
-)"
-[ -n "${PROFILE_ID}" ] || fail "Could not determine profile ID"
+# Keep one profile so acceptance never depends on interacting with a chooser.
+PROFILE_ID="default"
 
 log "Installing portable Windows fixture with ${RUNNER}"
 rdpsm windows-app install "${USERNAME}" --profile-id "${PROFILE_ID}" \
@@ -57,6 +63,9 @@ rdpsm windows-app install "${USERNAME}" --profile-id "${PROFILE_ID}" \
 APP_ID="$(rdpsm windows-app status "${USERNAME}" --format json |
     python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["manifest"]["app_id"])')"
 rdpsm windows-app validate "${USERNAME}" "${APP_ID}"
+
+# Preserve dispatcher errors before deleting the disposable account.
+sed -i '/^exec \/usr\/bin\/python3/i exec >> "$HOME/.rdpsm-acceptance.log" 2>\&1' "/opt/rdp-users/${USERNAME}/.xsession"
 
 Xvfb "${DISPLAY_NUMBER}" -screen 0 1280x720x24 -ac \
     >"${ARTIFACTS}/xvfb.log" 2>&1 &

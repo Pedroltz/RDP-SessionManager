@@ -10,9 +10,9 @@ from datetime import datetime, timedelta
 from unittest.mock import Mock, patch, MagicMock
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from core.session_monitor import SessionMonitor, SessionInfo
+from rdp_session_manager.infrastructure.session_monitor import SessionMonitor, SessionInfo
 
 
 class TestSessionInfo(unittest.TestCase):

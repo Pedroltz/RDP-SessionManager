@@ -13,13 +13,13 @@ mkdir -p "$ARTIFACTS"
 cleanup() {
     set +e
     if $CREATED; then
-        PYTHONPATH="$ROOT_DIR/src" python3 "$ROOT_DIR/src/cli.py" \
+        PYTHONPATH="$ROOT_DIR/src" python3 "$ROOT_DIR/src/rdp_session_manager/presentation/cli/__main__.py" \
             user delete "$USERNAME" --force >/dev/null 2>&1
     fi
 }
 trap cleanup EXIT
 
-rdpsm_cmd=(env PYTHONPATH="$ROOT_DIR/src" python3 "$ROOT_DIR/src/cli.py")
+rdpsm_cmd=(env PYTHONPATH="$ROOT_DIR/src" python3 "$ROOT_DIR/src/rdp_session_manager/presentation/cli/__main__.py")
 "${rdpsm_cmd[@]}" user create "$USERNAME" --password "$PASSWORD" \
     --session-type remoteapp --app-command xfce4-terminal
 CREATED=true

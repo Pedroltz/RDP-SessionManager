@@ -11,9 +11,9 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from core.user_manager import ConnectionProfile, UserManager, RDPUser
+from rdp_session_manager.infrastructure.user_manager import ConnectionProfile, UserManager, RDPUser
 
 
 class TestUserManager(unittest.TestCase):
@@ -245,8 +245,8 @@ class TestUserManager(unittest.TestCase):
         self.assertFalse(self.user_manager._validate_username('user@name'))
         self.assertFalse(self.user_manager._validate_username('user.name'))
 
-    @patch('core.user_manager.get_privilege_command')
-    @patch('core.user_manager.subprocess.run')
+    @patch('rdp_session_manager.infrastructure.user_manager.get_privilege_command')
+    @patch('rdp_session_manager.infrastructure.user_manager.subprocess.run')
     def test_create_system_user_uses_one_elevation_and_password_stdin(
         self, run, privilege
     ):
@@ -282,7 +282,7 @@ class TestUserManager(unittest.TestCase):
             'a password:with symbols!\n',
         )
 
-    @patch('core.user_manager.get_privilege_command')
+    @patch('rdp_session_manager.infrastructure.user_manager.get_privilege_command')
     def test_unreadable_profile_does_not_request_elevation(self, privilege):
         with tempfile.TemporaryDirectory() as directory:
             profile_file = Path(directory) / '.rdp_profiles.json'
@@ -360,8 +360,8 @@ class TestUserManager(unittest.TestCase):
         self.assertNotIn(str(uninstaller), paths)
         self.assertNotIn(str(wine_notepad), paths)
 
-    @patch('core.user_manager.get_privilege_command')
-    @patch('core.user_manager.subprocess.run')
+    @patch('rdp_session_manager.infrastructure.user_manager.get_privilege_command')
+    @patch('rdp_session_manager.infrastructure.user_manager.subprocess.run')
     def test_repair_user_uses_one_elevation_and_password_stdin(
         self, run, privilege
     ):
@@ -402,8 +402,8 @@ class TestUserManager(unittest.TestCase):
         self.assertEqual(command[-1], 'plan-123')
         self.assertEqual(run.call_args.kwargs['input'], 'new password\n')
 
-    @patch('core.user_manager.get_privilege_command')
-    @patch('core.user_manager.subprocess.run')
+    @patch('rdp_session_manager.infrastructure.user_manager.get_privilege_command')
+    @patch('rdp_session_manager.infrastructure.user_manager.subprocess.run')
     def test_change_password_never_places_secret_in_argv(self, run, privilege):
         self.user_manager.user_exists = Mock(return_value=True)
         privilege.return_value = ('sudo', ['sudo'])
@@ -415,8 +415,8 @@ class TestUserManager(unittest.TestCase):
         self.assertNotIn('very secret', repr(command))
         self.assertEqual(run.call_args.kwargs['input'], 'rdptest:very secret\n')
 
-    @patch('core.user_manager.get_privilege_command')
-    @patch('core.user_manager.subprocess.run')
+    @patch('rdp_session_manager.infrastructure.user_manager.get_privilege_command')
+    @patch('rdp_session_manager.infrastructure.user_manager.subprocess.run')
     def test_lock_user_kills_sessions(self, mock_run, mock_privilege):
         """Test lock_user calls toggle script and kills user processes"""
         self.user_manager.user_exists = Mock(return_value=True)
@@ -436,8 +436,8 @@ class TestUserManager(unittest.TestCase):
         self.user_manager.kill_user_processes.assert_called_once_with('rdptest', force=False)
         self.assertFalse(UserManager._user_states_cache.get('rdptest'))
 
-    @patch('core.user_manager.get_privilege_command')
-    @patch('core.user_manager.subprocess.run')
+    @patch('rdp_session_manager.infrastructure.user_manager.get_privilege_command')
+    @patch('rdp_session_manager.infrastructure.user_manager.subprocess.run')
     def test_unlock_user(self, mock_run, mock_privilege):
         """Test unlock_user calls toggle script for unlock"""
         self.user_manager.user_exists = Mock(return_value=True)

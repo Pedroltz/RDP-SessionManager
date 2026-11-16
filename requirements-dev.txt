@@ -1,0 +1,4 @@
+-r requirements.txt
+-r installer/requirements.txt
+setuptools>=65
+wheel

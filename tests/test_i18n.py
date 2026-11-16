@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from core.i18n import (
+from rdp_session_manager.infrastructure.i18n import (
     _,
     get_text,
     get_current_language,

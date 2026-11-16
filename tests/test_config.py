@@ -11,9 +11,9 @@ from pathlib import Path
 from unittest.mock import patch, Mock
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from core.config import AppConfig
+from rdp_session_manager.infrastructure.config import AppConfig
 
 
 class TestAppConfig(unittest.TestCase):

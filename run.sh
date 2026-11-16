@@ -16,4 +16,5 @@ if ! python3 -c "import psutil" 2>/dev/null; then
 fi
 
 # Run the application
-python3 src/main.py
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$PROJECT_DIR/src/rdp_session_manager/presentation/gtk/__main__.py" "$@"

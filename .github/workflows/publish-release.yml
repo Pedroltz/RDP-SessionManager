@@ -22,7 +22,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          version="$(python3 -c "from src.version import __version__; print(__version__)")"
+          version="$(PYTHONPATH=src python3 -c "from rdp_session_manager.version import __version__; print(__version__)")"
           tag_version="${GITHUB_REF_NAME#v}"
           if [[ "$version" != "$tag_version" ]]; then
             printf 'Tag %s does not match application version %s\n' \
@@ -35,9 +35,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             ruby ruby-dev rubygems build-essential zstd libarchive-tools \
-            python3-gi python3-gi-cairo python3-psutil \
+            python3-gi python3-gi-cairo python3-psutil python3-rich python3-venv \
             gir1.2-gtk-4.0 gir1.2-adw-1
-          sudo gem install --no-document fpm
+          sudo gem install --no-document fpm erb
+          python3 -m venv --system-site-packages /tmp/rdpsm-ci
+          /tmp/rdpsm-ci/bin/pip install -r installer/requirements.txt
+          echo "/tmp/rdpsm-ci/bin" >> "$GITHUB_PATH"
       - name: Run release gates
         run: |
           python3 -m compileall -q src helpers tests installer

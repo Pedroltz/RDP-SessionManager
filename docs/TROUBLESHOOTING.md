@@ -8,6 +8,27 @@ This document provides solutions to known issues and anticipates potential futur
 
 ## Critical Issues
 
+### Linux application or desktop closes immediately after RDP login
+
+Check `journalctl -b -u xrdp-sesman` for the application exit code. For Firefox
+crashes, also check `journalctl -b -k --grep 'fork rejected|oom-kill'`.
+`cgroup: fork rejected by pids controller` indicates exhaustion of `TasksMax`,
+which counts every thread as well as each process. The previous `linux-light`
+default of 256 can prevent Firefox and desktop services from starting; the new
+default is 1024. Existing explicit settings are preserved. If affected, update
+`tasks_max` in `[resource:linux-light]` in `/etc/rdp-session-manager/server.ini`
+and reapply the server settings to the affected users before reconnecting.
+
+GNOME RDP profiles use GNOME Flashback with Metacity on X11. Having
+`gnome-session` installed alone is insufficient. Run `rdpsm de install gnome`
+if `/usr/share/gnome-session/sessions/gnome-flashback-metacity.session` is absent.
+
+Linux RemoteApps require `xprop` (`xorg-xprop` on Arch, `x11-utils` on Debian).
+The supervisor follows windows on the connection's display even when the
+launcher exits. Closing the last window ends the session after a one-second
+grace period; a successful launcher that never opens a window times out after
+15 seconds. D-Bus activated services receive the RDP display environment.
+
 ### Authentication on Headless Servers
 
 When no graphical user session is available, administrative operations use

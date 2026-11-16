@@ -5,7 +5,7 @@
 ### Phase 1: Base Structure (100% Complete)
 
 - [x] Directory structure created
-- [x] Build system configured (Meson + setuptools)
+- [x] Build system configured (setuptools + native packaging)
 - [x] Application metadata (Desktop file, AppData, GSchema)
 - [x] PolicyKit configured for administrative actions
 
@@ -210,12 +210,12 @@ pip install -r requirements.txt
 pip install pytest
 
 # Run in development mode
-python3 src/main.py
+./run.sh
 ```
 
 ### Adding a New Desktop Environment
 
-1. Edit `src/core/de_installer.py`
+1. Edit `src/rdp_session_manager/infrastructure/de_installer.py`
 2. Add entry in `DE_PACKAGES`:
 
 ```python
@@ -231,7 +231,7 @@ python3 src/main.py
 
 ### Adding New Validation
 
-1. Edit `src/utils/validator.py`
+1. Edit `src/rdp_session_manager/domain/validator.py`
 2. Add static method:
 
 ```python
@@ -252,7 +252,7 @@ pytest tests/ -v
 pytest tests/test_validator.py -v
 
 # With coverage
-pytest tests/ --cov=src --cov-report=html
+pytest tests/ --cov=rdp_session_manager --cov-report=html
 ```
 
 ## Code Standards
@@ -286,7 +286,7 @@ export G_MESSAGES_DEBUG=all
 export GTK_DEBUG=interactive
 
 # Run application
-python3 src/main.py
+./run.sh
 ```
 
 ### System Logs
@@ -314,21 +314,16 @@ pkcheck --action-id com.rdp.SessionManager.create-user --process $$
 
 ## Build and Distribution
 
-### Build with Meson
+### Build Python and native packages
 
 ```bash
-# Configure
-meson setup builddir --prefix=/usr
-
-# Compile
-meson compile -C builddir
-
-# Install
-sudo meson install -C builddir
-
-# Uninstall
-sudo ninja -C builddir uninstall
+python3 setup.py bdist_wheel
+bash installer/build_packages.sh
 ```
+
+The implementation lives in `src/rdp_session_manager`; see [ARCHITECTURE.md](ARCHITECTURE.md).
+Use the canonical package imports and `./run.sh` checkout launcher. Meson fragments had no
+root build definition and have been removed.
 
 ### Create Debian Package
 

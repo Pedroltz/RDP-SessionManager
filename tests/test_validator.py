@@ -8,9 +8,9 @@ import sys
 from pathlib import Path
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from utils.validator import Validator
+from rdp_session_manager.domain.validator import Validator
 
 
 class TestValidator(unittest.TestCase):

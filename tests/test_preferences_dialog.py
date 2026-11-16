@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from core.server_config import ServerSettings, RESOURCE_PROFILES
+from rdp_session_manager.infrastructure.server_config import ServerSettings, RESOURCE_PROFILES
 
 
 class TestPreferencesCapacityLogic(unittest.TestCase):

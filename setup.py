@@ -9,7 +9,7 @@ from pathlib import Path
 import glob
 import re
 
-VERSION = re.search(r'__version__\s*=\s*["\']([^"\']+)', Path('src/version.py').read_text()).group(1)
+VERSION = re.search(r'__version__\s*=\s*["\']([^"\']+)', Path('src/rdp_session_manager/version.py').read_text()).group(1)
 
 # Get all helper scripts
 helper_scripts = glob.glob('helpers/*.sh') + glob.glob('helpers/*.py')
@@ -21,13 +21,18 @@ setup(
     author='Pedroltz',
     author_email='your.email@example.com',
     url='https://github.com/Pedroltz/rdp-session-manager',
-    packages=find_packages('src'),
+    packages=find_packages('src', include=['rdp_session_manager', 'rdp_session_manager.*']),
     package_dir={'': 'src'},
     data_files=[
         # Install helper scripts to /usr/share/rdp-session-manager/helpers
         ('share/rdp-session-manager/helpers', helper_scripts),
         ('share/rdp-session-manager/windows-app-recipes',
          glob.glob('data/windows-app-recipes/*.json')),
+        ('share/rdp-session-manager/data/ui', glob.glob('data/ui/*.ui')),
+        ('share/polkit-1/actions', ['data/com.rdp.SessionManager.policy']),
+        ('share/glib-2.0/schemas', ['data/com.rdp.SessionManager.gschema.xml']),
+        ('share/metainfo', ['data/com.rdp.SessionManager.appdata.xml']),
+        ('share/icons/hicolor/scalable/apps', ['data/icons/hicolor/scalable/apps/com.rdp.SessionManager.png']),
         ('etc/logrotate.d', ['data/rdp-session-manager.logrotate']),
     ],
     install_requires=[
@@ -38,7 +43,8 @@ setup(
     python_requires='>=3.9',
     entry_points={
         'console_scripts': [
-            'rdp-session-manager=main:main',
+            'rdp-session-manager=rdp_session_manager.presentation.gtk.main:main',
+            'rdpsm=rdp_session_manager.presentation.cli.commands:main',
         ],
     },
     classifiers=[

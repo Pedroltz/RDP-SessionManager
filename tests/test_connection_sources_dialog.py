@@ -8,9 +8,9 @@ import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from core.user_manager import RDPUser, ConnectionProfile
+from rdp_session_manager.infrastructure.user_manager import RDPUser, ConnectionProfile
 
 
 class TestConnectionSourcesLogic(unittest.TestCase):

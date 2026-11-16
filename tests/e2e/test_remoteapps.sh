@@ -26,7 +26,7 @@ RDPSM_BIN="/tmp/rdpsm"
 cat > /tmp/rdpsm <<WRAPPEREOF
 #!/bin/bash
 export PYTHONPATH="${SCRIPT_DIR}/src:\${PYTHONPATH}"
-exec python3 "${SCRIPT_DIR}/src/cli.py" "\$@"
+exec python3 "${SCRIPT_DIR}/src/rdp_session_manager/presentation/cli/__main__.py" "\$@"
 WRAPPEREOF
 chmod +x /tmp/rdpsm
 export PATH="/tmp:${PATH}"
@@ -214,14 +214,14 @@ else
 fi
 
 # Test Flatpak RemoteApp
-if command -v flatpak >/dev/null; then
+if command -v flatpak >/dev/null && flatpak info org.gnome.Calculator >/dev/null 2>&1; then
     if test_remoteapp "flatpak" "flatpak" "run org.gnome.Calculator"; then
         PASSED_APPS+=("flatpak (org.gnome.Calculator)")
     else
         FAILED_APPS+=("flatpak (org.gnome.Calculator)")
     fi
 else
-    log "Skipping Flatpak test: flatpak binary not found"
+    log "Skipping Flatpak test: org.gnome.Calculator is not installed"
 fi
 
 log "========================================================"

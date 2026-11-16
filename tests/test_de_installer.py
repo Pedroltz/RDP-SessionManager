@@ -8,10 +8,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from core.de_installer import DEInstaller
-from core.desktop_environments import (
+from rdp_session_manager.infrastructure.de_installer import DEInstaller
+from rdp_session_manager.infrastructure.desktop_environments import (
     SUPPORTED_DESKTOPS,
     detect_distro,
     get_desktop_info,
@@ -69,7 +69,7 @@ class DEInstallerTest(unittest.TestCase):
         }
         return installer
 
-    @patch("core.de_installer.subprocess.run")
+    @patch("rdp_session_manager.infrastructure.de_installer.subprocess.run")
     def test_debian_detection_uses_dpkg_query(self, run):
         run.return_value = subprocess.CompletedProcess([], 0, stdout="ii ", stderr="")
         installer = self.make_installer("debian")
@@ -80,7 +80,7 @@ class DEInstallerTest(unittest.TestCase):
             ["/usr/bin/dpkg-query", "-W", "-f=${db:Status-Abbrev}", "xfce4"],
         )
 
-    @patch("core.de_installer.subprocess.run")
+    @patch("rdp_session_manager.infrastructure.de_installer.subprocess.run")
     def test_arch_detection_uses_pacman(self, run):
         run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
         installer = self.make_installer("arch")
@@ -90,6 +90,22 @@ class DEInstallerTest(unittest.TestCase):
             run.call_args.args[0],
             ["/usr/bin/pacman", "-Q", "xfce4-session"],
         )
+
+    @patch("rdp_session_manager.infrastructure.de_installer.Path.is_file", return_value=False)
+    @patch("rdp_session_manager.infrastructure.de_installer.shutil.which", return_value="/usr/bin/gnome-session")
+    @patch("rdp_session_manager.infrastructure.de_installer.subprocess.run")
+    def test_gnome_binary_does_not_hide_missing_flashback(self, run, which, is_file):
+        run.return_value = subprocess.CompletedProcess([], 0, stdout="ii ")
+        for family in ("arch", "debian"):
+            self.assertFalse(self.make_installer(family).is_de_installed("gnome"))
+        run.assert_not_called()
+
+    @patch("rdp_session_manager.infrastructure.de_installer.Path.is_file", return_value=True)
+    @patch("rdp_session_manager.infrastructure.de_installer.subprocess.run")
+    def test_gnome_with_flashback_is_detected(self, run, is_file):
+        run.return_value = subprocess.CompletedProcess([], 0, stdout="ii ")
+        for family in ("arch", "debian"):
+            self.assertTrue(self.make_installer(family).is_de_installed("gnome"))
 
     def test_list_contains_only_three_desktops(self):
         installer = self.make_installer("arch")
@@ -105,7 +121,7 @@ class DEInstallerTest(unittest.TestCase):
             patch.object(installer, "check_disk_space", return_value=(True, 600, 5000)),
             patch.object(installer, "_run_command", return_value=completed) as run_command,
             patch(
-                "core.de_installer.get_privilege_command",
+                "rdp_session_manager.infrastructure.de_installer.get_privilege_command",
                 return_value=("sudo", ["sudo"]),
             ),
         ):
@@ -126,7 +142,7 @@ class DEInstallerTest(unittest.TestCase):
             patch.object(installer, "check_disk_space", return_value=(True, 600, 5000)),
             patch.object(installer, "_run_command", return_value=completed) as run_command,
             patch(
-                "core.de_installer.get_privilege_command",
+                "rdp_session_manager.infrastructure.de_installer.get_privilege_command",
                 return_value=("sudo", ["sudo"]),
             ),
         ):
