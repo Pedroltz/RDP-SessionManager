@@ -1121,7 +1121,37 @@ Would you like to continue?"""
             install_dialog.present()
             return
 
-        # Ir direto para dialog de senha
+        if getattr(user, 'personal_mode', '') == 'live':
+            dialog = Adw.MessageDialog(transient_for=self, heading="Test Live Desktop Sharing",
+                body="This connects to your current desktop. Being logged in is required. Testing on the same screen can create a screen-within-screen effect. Use the RDP password configured for sharing, which may differ from your Linux password.")
+            dialog.add_response('cancel', 'Cancel')
+            dialog.add_response('connect', 'Continue')
+            dialog.connect('response', lambda d, r: self.show_password_dialog(user) if r == 'connect' else None)
+            dialog.present()
+            return
+        from rdp_session_manager.infrastructure.connection_diagnostics import has_rdp_group, has_local_session
+        if not has_rdp_group(user.username):
+            dialog = Adw.MessageDialog(transient_for=self, heading="RDP access needs configuration",
+                body="XRDP requires membership in rdp-users. Repair access using administrator authorization.")
+            dialog.add_response('cancel', 'Cancel')
+            dialog.add_response('repair', 'Repair access')
+            def repair_response(d, response):
+                if response == 'repair':
+                    from rdp_session_manager.infrastructure.connection_diagnostics import repair_group
+                    self._tasks.submit('repair-access:' + user.username,
+                        lambda: repair_group(user.username),
+                        lambda value, error: self.show_toast(str(error)) if error else self.on_connect_rdp(user))
+            dialog.connect('response', repair_response)
+            dialog.present()
+            return
+        if has_local_session(user.username):
+            dialog = Adw.MessageDialog(transient_for=self, heading="Local session is active",
+                body="XRDP opens a separate session and may conflict with this user's local desktop. Use Live Desktop Sharing to share the current session. Your local session will not be closed.")
+            dialog.add_response('cancel', 'Cancel')
+            dialog.add_response('connect', 'Continue with XRDP')
+            dialog.connect('response', lambda d, r: self.show_password_dialog(user) if r == 'connect' else None)
+            dialog.present()
+            return
         self.show_password_dialog(user)
 
     def on_freerdp_install_response(self, response, user):
@@ -1884,34 +1914,24 @@ Would you like to continue?"""
             cmd_display = [arg if not arg.startswith('/p:') else '/p:***' for arg in cmd]
             logger.info(f"FreeRDP command: {' '.join(cmd_display)}")
 
-            # Abrir processo com captura de erro
-            process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-            # Verificar se processo iniciou corretamente
-            time.sleep(0.5)
-            if process.poll() is not None:
-                # Processo terminou imediatamente - houve erro
-                _, stderr = process.communicate()
-                error_msg = stderr.decode('utf-8', errors='ignore') if stderr else 'See FreeRDP diagnostics'
-                logger.error(f"FreeRDP failed. Exit code: {process.returncode}, Error: {error_msg}")
-                raise Exception(f"FreeRDP exited with code {process.returncode}: {error_msg[:200]}")
-
-            # Mostrar mensagem de sucesso
-            is_remoteapp = hasattr(user, 'session_type') and user.session_type == 'remoteapp'
-            if is_remoteapp:
-                app_name = user.app_command.split('/')[-1]
-                self._callbacks.idle_add(self.show_toast, f"Opening RemoteApp: {app_name}...")
-                logger.info(f"Launched RemoteApp {app_name} for user {user.username}")
-            else:
-                domain_suffix = f" (domain: {domain})" if domain else ""
-                self._callbacks.idle_add(self.show_toast, f"Opening {freerdp_cmd}{domain_suffix}...")
-                logger.info(f"Launched {freerdp_cmd} for user {user.username}{domain_suffix}")
+            from rdp_session_manager.infrastructure.connection_diagnostics import connection_error
+            self._callbacks.idle_add(self.show_toast, "Connecting through RDP...")
+            process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            _, stderr = process.communicate()
+            if process.returncode:
+                message = connection_error((stderr or b'').decode('utf-8', errors='replace'))
+                self._callbacks.idle_add(self._show_connection_error, message)
         except FileNotFoundError:
             self._callbacks.idle_add(self.show_toast, "FreeRDP not found")
             logger.error("FreeRDP command not found")
         except Exception as e:
             logger.error(f"Error launching FreeRDP: {e}")
             self._callbacks.idle_add(self.show_toast, f"Error opening FreeRDP: {e}")
+
+    def _show_connection_error(self, message):
+        dialog = Adw.MessageDialog(transient_for=self, heading="RDP connection failed", body=message)
+        dialog.add_response('ok', 'OK')
+        dialog.present()
 
     def on_copy_ip(self, button):
         """Copy IP to clipboard"""
