@@ -1,94 +1,179 @@
 <div align="center">
-  <h1>RDP Session Manager</h1>
-  <br>
-  <img src="imgs/rdp-session-manager-header.png" alt="RDP Session Manager" width="100%">
-  <br><br>
-  <a href="https://github.com/Pedroltz/rdp-session-manager/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-ea4aaa?style=for-the-badge" alt="GPL-3.0 license"></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.9%2B-3776ab?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.9 or later"></a>
-  <a href="https://www.gtk.org/"><img src="https://img.shields.io/badge/GTK-4-78c2ad?style=for-the-badge&logo=gnome&logoColor=white" alt="GTK 4"></a>
-  <a href="https://pedroltz.github.io/RDP-SessionManager/"><img src="https://img.shields.io/badge/website-live-09090b?style=for-the-badge&logo=astro&logoColor=FF5D01" alt="Official Website"></a>
-  <a href="https://github.com/Pedroltz/rdp-session-manager/actions"><img src="https://img.shields.io/github/actions/workflow/status/Pedroltz/rdp-session-manager/deploy-pages.yml?style=for-the-badge&label=website" alt="Website checks"></a>
-  <a href="https://github.com/Pedroltz/rdp-session-manager/releases"><img src="https://img.shields.io/github/v/release/Pedroltz/rdp-session-manager?style=for-the-badge&color=9b8cff" alt="Latest release"></a>
-  <br><br>
-  <p><code>Linux</code> &nbsp;•&nbsp; <code>GTK 4</code> &nbsp;•&nbsp; <code>libadwaita</code> &nbsp;•&nbsp; <code>xrdp</code> &nbsp;•&nbsp; <code>RemoteApp</code></p>
-  <p>🌐 <a href="https://pedroltz.github.io/RDP-SessionManager/"><strong>pedroltz.github.io/RDP-SessionManager</strong></a></p>
+
+<img src="imgs/readme/banner.svg" alt="RDP Session Manager — GTK 4, CLI e xrdp para Linux" width="100%">
+
+### Seu servidor RDP. Tudo sob controle.
+
+Gerencie usuários, desktops e aplicações remotas em uma interface nativa para Linux.<br>Use a GUI no desktop e a CLI nas suas rotinas de automação.
+
+**Português** · [English](README.en.md)
+
+[![Release](https://img.shields.io/github/v/release/Pedroltz/RDP-SessionManager?style=flat-square&color=b6a0ff&label=release)](https://github.com/Pedroltz/RDP-SessionManager/releases/latest) [![Licença GPL-3.0](https://img.shields.io/badge/licen%C3%A7a-GPL--3.0-b6a0ff?style=flat-square)](LICENSE) [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/) [![GTK 4](https://img.shields.io/badge/GTK-4-78c2ad?style=flat-square&logo=gnome&logoColor=white)](https://www.gtk.org/) [![Publicação do site](https://img.shields.io/github/actions/workflow/status/Pedroltz/RDP-SessionManager/deploy-pages.yml?branch=master&style=flat-square&label=website)](https://github.com/Pedroltz/RDP-SessionManager/actions/workflows/deploy-pages.yml)
+
+[**Site oficial ↗**](https://pedroltz.github.io/RDP-SessionManager/) · [Instalação](#instalação-rápida) · [Terminal](#no-terminal) · [Como funciona](#como-funciona) · [Documentação](#documentação)
+
 </div>
 
-## Overview
+## Conheça o projeto
 
-RDP Session Manager provides a graphical interface for administering RDP access through xrdp on supported Linux distributions. It centralizes account management, session configuration, and dependency checks in a native GTK 4 and libadwaita application.
+O **RDP Session Manager** centraliza a administração de acesso remoto via **xrdp**: contas de usuários, perfis de conexão, desktops, aplicações e diagnósticos. A interface usa **GTK 4 e libadwaita**; a CLI `rdpsm` permite administrar pelo terminal, inclusive em servidores sem ambiente gráfico.
 
-## Features
+O aplicativo de administração roda no **servidor Linux**. Os usuários acessam as sessões com um cliente RDP compatível, a partir de Windows, Linux, macOS, Android ou iOS.
 
-- Create, remove, enable, and disable RDP user accounts.
-- Configure full desktop sessions with KDE Plasma, GNOME, or XFCE.
-- Run Linux applications as RemoteApp sessions.
-- Run Windows applications through umu, with legacy WineGE prefix compatibility.
-- Check and install required RDP components when needed.
-- Monitor user status and active sessions.
-- Inspect unified host, user, and session health from GTK or `rdpsm health`.
-- Preview repair plans, automatically roll back managed files on failure, and
-  export privileged repair audit events as JSONL.
+## A interface, na prática
 
-## Technology
+### Usuários, sessões e saúde do servidor
 
-- Python 3.9+
-- GTK 4 and libadwaita
-- xrdp and FreeRDP
-- PolicyKit for privileged system operations
+Veja as contas RDP, o estado das conexões e o resumo de saúde do sistema em uma única janela.
 
-## Requirements
+[![Janela principal do RDP Session Manager com três usuários de exemplo, uma sessão ativa e resumo de saúde do servidor](imgs/readme/dashboard.png)](imgs/readme/dashboard.png)
 
-Supported distributions:
+*Captura da interface real com dados de exemplo. Clique na imagem para ampliar.*
 
-- Ubuntu 22.04 LTS or later and derivatives
-- Debian 12 or later
-- Arch Linux and derivatives, including Manjaro, EndeavourOS, and CachyOS
+<details>
+<summary><strong>Ver a criação de usuário e a configuração de uma aplicação remota</strong></summary>
 
-The application requires Python, GTK 4, libadwaita, and PolicyKit. The installer can set up xrdp and FreeRDP; see the installation guide for the complete dependency list.
+Escolha entre desktop completo, RemoteApp Linux ou uma aplicação Windows compatível. Neste exemplo, o formulário prepara uma sessão do LibreOffice Writer.
 
-## Installation
+[![Formulário de criação de usuário com conta fictícia office-team e sessão RemoteApp configurada para LibreOffice Writer](imgs/readme/create-user.png)](imgs/readme/create-user.png)
 
-Run the official installer:
+*Dados fictícios; nenhuma conta é criada durante a captura.*
 
-```bash
-curl -fsSL https://github.com/Pedroltz/rdp-session-manager/releases/latest/download/install.sh | bash
+</details>
+
+## O que você pode fazer
+
+| Recurso | Na prática |
+| --- | --- |
+| **Usuários e sessões** | Criar, habilitar, desabilitar e remover contas; acompanhar e encerrar sessões. |
+| **Desktops e RemoteApps** | Oferecer GNOME, KDE Plasma ou XFCE, ou iniciar uma aplicação Linux por sessão. |
+| **Aplicações Windows** | Usar umu/Proton para aplicações compatíveis, com suporte a perfis WineGE legados. |
+| **CLI e automação** | Administrar com `rdpsm` e consultar dados em tabela ou JSON. |
+| **Diagnóstico integrado** | Inspecionar a saúde do host, dos usuários e das sessões pela GUI ou CLI. |
+| **Reparo e auditoria** | Revisar planos de reparo, restaurar arquivos gerenciados em caso de falha e exportar eventos de auditoria em JSONL. |
+
+## Como funciona
+
+A administração e a conexão remota têm caminhos próprios: **GUI e CLI configuram o servidor; o cliente RDP se conecta ao xrdp**.
+
+```mermaid
+flowchart TB
+    subgraph admin["Administração no servidor Linux"]
+        GUI["GUI · GTK 4 + libadwaita"] --> CORE["Núcleo Python compartilhado"]
+        CLI["CLI · rdpsm"] --> CORE
+        CORE -->|"operações privilegiadas"| AUTH["PolicyKit / sudo"]
+        AUTH --> HELPERS["Helpers administrativos"]
+        HELPERS --> CONFIG["Contas e perfis de sessão"]
+    end
+
+    CLIENT["Cliente RDP<br/>Windows · Linux · macOS · Android · iOS"]
+
+    subgraph sessions["Sessões no servidor Linux"]
+        XRDP["xrdp"] --> DESKTOP["Desktop completo<br/>GNOME · KDE Plasma · XFCE"]
+        XRDP --> LINUX["RemoteApp Linux"]
+        XRDP --> UMU["umu / Proton"]
+        UMU --> WINDOWS["Aplicação Windows"]
+    end
+
+    CONFIG -.->|"configuração"| XRDP
+    CLIENT -->|"conexão RDP"| XRDP
+
+    classDef interface fill:#211c30,stroke:#b6a0ff,color:#f4f3f9
+    classDef server fill:#18181f,stroke:#8c849b,color:#f4f3f9
+    class GUI,CLI,CLIENT interface
+    class CORE,AUTH,HELPERS,CONFIG,XRDP,DESKTOP,LINUX,UMU,WINDOWS server
 ```
 
-For manual installation, installer options, and platform-specific notes, see the [installation guide](docs/INSTALL.md).
+- **Uma lógica compartilhada:** GUI e CLI usam os módulos Python de usuários, configuração, monitoramento e diagnóstico.
+- **Autenticação quando necessária:** operações administrativas usam helpers com PolicyKit na sessão gráfica ou sudo no terminal.
+- **Uma sessão por fluxo de trabalho:** o xrdp inicia o desktop ou a aplicação configurada. Aplicações Windows dependem da compatibilidade com o runtime; WineGE fica como opção legada.
 
-## Running the Application
+RemoteApp oferece uma aplicação dentro de uma sessão xrdp; não significa integração seamless/RAIL do Windows. Consulte os guias de [modo servidor](docs/SERVER_MODE.md) e [aplicações Windows](docs/WINDOWS_APPS.md) para os detalhes.
 
-From a development clone with the required dependencies installed:
+## Instalação rápida
+
+No servidor Linux, execute o instalador oficial:
+
+```bash
+curl -fsSL https://github.com/Pedroltz/RDP-SessionManager/releases/latest/download/install.sh | bash
+```
+
+O instalador detecta a distribuição, verifica os artefatos e orienta a instalação das dependências. Depois, abra **RDP Session Manager** pelo menu de aplicativos ou pelo terminal:
+
+```bash
+rdp-session-manager
+```
+
+Para opções do instalador, instalação manual e solução de problemas, veja o [guia de instalação](docs/INSTALL.md).
+
+## No terminal
+
+Liste contas e sessões sem abrir a interface gráfica:
+
+[![Terminal com a saída real dos comandos rdpsm user list e rdpsm session list, usando três contas e uma sessão de exemplo](imgs/readme/cli.png)](imgs/readme/cli.png)
+
+*Saída dos métodos reais da CLI, executados com dados fictícios. Clique para ampliar.*
+
+```bash
+# Contas RDP e sessões ativas
+rdpsm user list
+rdpsm session list
+
+# Diagnóstico do host, dos usuários e das sessões
+rdpsm health
+
+# JSON para scripts e monitoramento
+rdpsm user list --format json
+rdpsm health --format json
+```
+
+A mesma CLI também gerencia perfis, dependências, configuração do servidor e aplicações Windows. Veja os comandos e exemplos na [referência da CLI](docs/CLI.md).
+
+## Compatibilidade
+
+| Componente | Suporte |
+| --- | --- |
+| **Servidor Linux** | Ubuntu 22.04+, Debian 12+, Arch Linux e derivados suportados. |
+| **Interface gráfica** | Python 3.9+, GTK 4 e libadwaita. |
+| **Acesso remoto** | xrdp e um cliente RDP compatível com o tipo de sessão. |
+| **Desktops** | GNOME, KDE Plasma e XFCE. |
+| **Aplicações Windows** | Runtime umu/Proton; compatibilidade depende da aplicação. WineGE para perfis legados. |
+
+A administração privilegiada usa PolicyKit ou sudo, conforme o ambiente. Os requisitos de capacidade variam com a carga; consulte o [modo servidor](docs/SERVER_MODE.md) antes de dimensionar uma implantação. Nesse modo, Arch é um alvo experimental.
+
+## Documentação
+
+| Quero… | Onde encontrar |
+| --- | --- |
+| Instalar ou atualizar | [Guia de instalação](docs/INSTALL.md) |
+| Administrar pelo terminal | [Referência da CLI](docs/CLI.md) |
+| Instalar e validar aplicações Windows | [Aplicações Windows](docs/WINDOWS_APPS.md) |
+| Entender perfis WineGE existentes | [Guia legado do WineGE](docs/WINEGE_REMOTEAPP.md) |
+| Preparar um servidor sem interface gráfica | [Modo servidor](docs/SERVER_MODE.md) |
+| Investigar um problema | [Solução de problemas](docs/TROUBLESHOOTING.md) |
+| Entender desenvolvimento e publicação | [Desenvolvimento](docs/DEVELOPMENT.md) · [CI/CD](docs/CI.md) |
+| Acompanhar mudanças e próximos passos | [Changelog](CHANGELOG.md) · [Roadmap](docs/ROADMAP_V0.7.md) |
+
+## Contribua
+
+Relatos de problemas, melhorias na documentação e contribuições de código são bem-vindos. Abra uma [issue](https://github.com/Pedroltz/RDP-SessionManager/issues) com o contexto do problema ou envie um pull request com uma mudança focada.
+
+<details>
+<summary><strong>Executar a partir de um clone de desenvolvimento</strong></summary>
+
+Com as dependências do projeto instaladas, na raiz do repositório:
 
 ```bash
 ./run.sh
-```
 
-You can also start the graphical interface directly:
-
-```bash
+# Alternativa: iniciar a interface diretamente
 python3 src/main.py
 ```
 
-Command-line usage and available commands are documented in the [CLI reference](docs/CLI.md).
+Consulte os guias de [instalação](docs/INSTALL.md) e [desenvolvimento](docs/DEVELOPMENT.md) para preparar o ambiente.
 
-## Documentation
+</details>
 
-- [Installation guide](docs/INSTALL.md)
-- [CLI reference](docs/CLI.md)
-- [Windows RemoteApp and legacy WineGE guide](docs/WINEGE_REMOTEAPP.md)
-- [Production server mode](docs/SERVER_MODE.md)
-- [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Development guide](docs/DEVELOPMENT.md)
-- [Continuous integration and release checks](docs/CI.md)
-- [v0.7 implementation roadmap](docs/ROADMAP_V0.7.md)
-- [Changelog](CHANGELOG.md)
+## Licença
 
-## Contributing
-
-Contributions are welcome. Fork the repository, create a focused branch, and open a pull request describing the change.
-
-## License
-
-This project is licensed under the [GNU General Public License v3.0](LICENSE).
+Distribuído sob a [GNU General Public License v3.0](LICENSE).
