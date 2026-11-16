@@ -246,7 +246,13 @@ class MainWindow(Adw.ApplicationWindow):
 
         # Subtitle diferente para RemoteApp vs Desktop
         is_personal = getattr(user, 'is_personal', False)
-        prefix = "Personal • " if is_personal else ""
+        personal_mode = getattr(user, 'personal_mode', 'xrdp')
+        if is_personal and personal_mode == 'live':
+            prefix = "Personal (Live) • "
+        elif is_personal:
+            prefix = "Personal • "
+        else:
+            prefix = ""
         if hasattr(user, 'session_type') and user.session_type == 'remoteapp':
             app_name = user.app_command.split('/')[-1] if user.app_command else 'unknown'
             row.set_subtitle(f"{prefix}RemoteApp: {app_name} • Port {user.rdp_port} • IP: {self._server_ip}")
@@ -338,7 +344,8 @@ class MainWindow(Adw.ApplicationWindow):
         profiles_row.add_controller(profiles_gesture)
         profiles_row.set_cursor_from_name("pointer")
 
-        menu_box.append(profiles_row)
+        if not (is_personal and personal_mode == 'live'):
+            menu_box.append(profiles_row)
 
         # Settings row (configurações de usuário)
         settings_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -387,7 +394,8 @@ class MainWindow(Adw.ApplicationWindow):
         )
         repair_row.add_controller(repair_gesture)
         repair_row.set_cursor_from_name("pointer")
-        menu_box.append(repair_row)
+        if not (is_personal and personal_mode == 'live'):
+            menu_box.append(repair_row)
 
         # Separator
         separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
@@ -510,18 +518,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_add_current_user(self, button):
         """Enable RDP access for the current personal OS user."""
-        if not self._xrdp_ready:
-            dialog = Adw.MessageDialog(
-                transient_for=self,
-                heading="xrdp Is Not Installed",
-                body="You must install the xrdp server before enabling RDP.\n\nWould you like to install it now?"
-            )
-            dialog.add_response("cancel", "Cancel")
-            dialog.add_response("install", "Install xrdp")
-            dialog.set_response_appearance("install", Adw.ResponseAppearance.SUGGESTED)
-            dialog.connect("response", self.on_add_user_xrdp_check_response)
-            dialog.present()
-            return
+        from rdp_session_manager.infrastructure import live_desktop
 
         current_user = self.user_manager.get_current_username()
         if not current_user:
@@ -530,6 +527,10 @@ class MainWindow(Adw.ApplicationWindow):
         if self.user_manager.get_user(current_user) is not None:
             self.show_toast(f"RDP is already configured for {current_user}")
             return
+
+        backend_info = live_desktop.detect_live_session_backend()
+        backend_name = backend_info['backend']
+        backend_installed = live_desktop.is_backend_installed(backend_name)
 
         des = self.de_installer.get_available_des()
         de_ids = [de['id'] for de in des] if des else ['xfce']
@@ -540,7 +541,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         default_index = 0
         for idx, de in enumerate(des or []):
-            if de.get('installed'):
+            if de.get('installed') and de.get('id') != 'gnome':
                 default_index = idx
                 break
 
@@ -548,19 +549,61 @@ class MainWindow(Adw.ApplicationWindow):
             transient_for=self,
             heading=f"Enable RDP for {current_user}?",
             body=(
-                "This configures RDP access for your current Linux account using your existing "
-                "password and home directory."
+                "Choose whether to share your exact running desktop or start a separate X11 session."
             ),
         )
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         box.set_margin_top(8)
-        label = Gtk.Label(label="Desktop Environment")
-        label.set_halign(Gtk.Align.START)
-        label.add_css_class("dim-label")
+
+        mode_label = Gtk.Label(label="Session Mode")
+        mode_label.set_halign(Gtk.Align.START)
+        mode_label.add_css_class("dim-label")
+        mode_combo = Gtk.DropDown.new_from_strings([
+            f"Share Current Desktop (Live • {backend_info['desktop'].upper()})",
+            "Separate X11 Session (xrdp)",
+        ])
+        mode_combo.set_selected(0)
+        box.append(mode_label)
+        box.append(mode_combo)
+
+        # Live mode controls
+        live_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        pwd_label = Gtk.Label(label="RDP Connection Password (Port 3390)")
+        pwd_label.set_halign(Gtk.Align.START)
+        pwd_label.add_css_class("dim-label")
+        pwd_entry = Gtk.PasswordEntry()
+        pwd_entry.set_show_peek_icon(True)
+        pwd_entry.set_property("placeholder-text", "Enter password for remote connection")
+        live_box.append(pwd_label)
+        live_box.append(pwd_entry)
+        if not backend_installed:
+            backend_note = Gtk.Label(
+                label=f"Requires {backend_info['arch_pkg']} (will prompt to install automatically)."
+            )
+            backend_note.set_halign(Gtk.Align.START)
+            backend_note.set_wrap(True)
+            backend_note.add_css_class("dim-label")
+            live_box.append(backend_note)
+        box.append(live_box)
+
+        # Separate X11 mode controls
+        xrdp_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        de_label = Gtk.Label(label="Desktop Environment")
+        de_label.set_halign(Gtk.Align.START)
+        de_label.add_css_class("dim-label")
         combo = Gtk.DropDown.new_from_strings(de_labels)
         combo.set_selected(default_index)
-        box.append(label)
-        box.append(combo)
+        xrdp_box.append(de_label)
+        xrdp_box.append(combo)
+        xrdp_box.set_visible(False)
+        box.append(xrdp_box)
+
+        def _on_mode_changed(_dd, _pspec):
+            is_live = mode_combo.get_selected() == 0
+            live_box.set_visible(is_live)
+            xrdp_box.set_visible(not is_live)
+
+        mode_combo.connect("notify::selected", _on_mode_changed)
         dialog.set_extra_child(box)
 
         dialog.add_response("cancel", "Cancel")
@@ -569,14 +612,31 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.set_default_response("enable")
         dialog.set_close_response("cancel")
 
+        def _enable_task(is_live, de_id, password):
+            if is_live:
+                if not live_desktop.is_backend_installed(backend_name):
+                    if not live_desktop.install_backend(backend_name):
+                        raise RuntimeError(f"Failed to install {backend_info['arch_pkg']}")
+                return self.user_manager.enable_personal_rdp(
+                    current_user, mode='live', port=live_desktop.DEFAULT_LIVE_RDP_PORT, password=password
+                )
+            if not self._xrdp_ready:
+                raise RuntimeError("xrdp is not installed")
+            return self.user_manager.enable_personal_rdp(current_user, desktop_env=de_id, mode='xrdp')
+
         def _on_response(_dialog, response):
             if response != "enable":
                 return
+            is_live = mode_combo.get_selected() == 0
             selected = combo.get_selected()
             de_id = de_ids[selected] if 0 <= selected < len(de_ids) else 'xfce'
+            password = pwd_entry.get_text()
+            if is_live and not password:
+                self.show_toast("Please enter an RDP password for live desktop sharing")
+                return
             self._tasks.submit(
                 f'enable-personal:{current_user}',
-                lambda: self.user_manager.enable_personal_rdp(current_user, desktop_env=de_id),
+                lambda: _enable_task(is_live, de_id, password),
                 lambda value, error: self._enable_personal_finished(current_user, value, error),
             )
 

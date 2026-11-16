@@ -116,20 +116,54 @@ class UserManager:
         except KeyError:
             return False
 
-    def _load_personal_users(self) -> Dict[str, bool]:
-        return UserStateRepository(self.personal_users_file).load()
-
-    def _save_personal_user(self, username: str, enabled: bool):
+    def _load_personal_users(self) -> Dict[str, Dict]:
+        if not self.personal_users_file.exists():
+            return {}
         try:
-            UserStateRepository(self.personal_users_file).update({username: bool(enabled)}, set())
+            data = json.loads(self.personal_users_file.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        normalized: Dict[str, Dict] = {}
+        for key, value in data.items():
+            if isinstance(value, bool):
+                normalized[key] = {"enabled": value, "mode": "xrdp", "port": 3389, "backend": ""}
+            elif isinstance(value, dict):
+                normalized[key] = {
+                    "enabled": bool(value.get("enabled", True)),
+                    "mode": value.get("mode", "xrdp"),
+                    "port": int(value.get("port", 3390 if value.get("mode") == "live" else 3389)),
+                    "backend": value.get("backend", ""),
+                }
+        return normalized
+
+    def _write_personal_users(self, data: Dict[str, Dict]):
+        try:
+            self.personal_users_file.parent.mkdir(parents=True, exist_ok=True)
+            self.personal_users_file.write_text(json.dumps(data, indent=2), encoding='utf-8')
         except OSError as exc:
             logger.error('Error saving personal RDP user state: %s', exc)
 
+    def _save_personal_user(self, username: str, enabled: bool, mode: Optional[str] = None, port: Optional[int] = None, backend: Optional[str] = None):
+        data = self._load_personal_users()
+        existing = data.get(username, {})
+        resolved_mode = mode or existing.get("mode", "xrdp")
+        resolved_port = port if port is not None else existing.get("port", 3390 if resolved_mode == "live" else 3389)
+        resolved_backend = backend if backend is not None else existing.get("backend", "")
+        data[username] = {
+            "enabled": bool(enabled),
+            "mode": resolved_mode,
+            "port": int(resolved_port),
+            "backend": resolved_backend,
+        }
+        self._write_personal_users(data)
+
     def _remove_personal_user_record(self, username: str):
-        try:
-            UserStateRepository(self.personal_users_file).update({}, {username})
-        except OSError as exc:
-            logger.error('Error removing personal RDP user state: %s', exc)
+        data = self._load_personal_users()
+        if username in data:
+            del data[username]
+            self._write_personal_users(data)
 
     def enable_personal_rdp(
         self,
@@ -138,9 +172,13 @@ class UserManager:
         session_type: str = 'desktop',
         app_command: str = '',
         app_args: str = '',
+        mode: str = 'xrdp',
+        port: int = 3390,
+        password: str = '',
     ) -> Optional[RDPUser]:
         """Configure RDP access for an existing personal OS user without modifying their OS account."""
         import tempfile
+        from rdp_session_manager.infrastructure import live_desktop
 
         target_user = username or self.get_current_username()
         if not target_user:
@@ -155,6 +193,18 @@ class UserManager:
             raise ValueError(f"Refusing to enable personal RDP for system user: {target_user}")
         if not self._is_personal_home(user_info.pw_dir):
             raise ValueError(f"User {target_user} is already a managed /opt/rdp-users account")
+
+        if mode == 'live':
+            backend_info = live_desktop.detect_live_session_backend()
+            backend_name = backend_info['backend']
+            if not live_desktop.is_backend_installed(backend_name):
+                raise RuntimeError(f"Live desktop backend '{backend_name}' is not installed")
+            if not live_desktop.start_live_rdp(target_user, port=port, password=password, backend=backend_name):
+                raise Exception(f"Failed to start live desktop sharing via {backend_name}")
+            self._save_personal_user(target_user, True, mode='live', port=port, backend=backend_name)
+            UserManager._user_states_cache[target_user] = True
+            self._save_states_cache()
+            return self.get_user(target_user)
 
         de_normalized = normalize_desktop_id(desktop_env) if session_type == 'desktop' else desktop_env
         if session_type == 'desktop':
@@ -196,7 +246,7 @@ class UserManager:
                 except OSError:
                     pass
 
-        self._save_personal_user(target_user, True)
+        self._save_personal_user(target_user, True, mode='xrdp', port=self._detect_rdp_port(user_info.pw_uid), backend='')
         UserManager._user_states_cache[target_user] = True
         self._save_states_cache()
         return self.get_user(target_user)
@@ -742,6 +792,15 @@ class UserManager:
                 raise ValueError(f"User does not exist: {username}")
 
             if self._is_personal_user(username):
+                personal_meta = self._load_personal_users().get(username, {})
+                if personal_meta.get('mode') == 'live':
+                    from rdp_session_manager.infrastructure import live_desktop
+                    live_desktop.stop_live_rdp(personal_meta.get('backend') or None)
+                    self._remove_personal_user_record(username)
+                    if username in UserManager._user_states_cache:
+                        del UserManager._user_states_cache[username]
+                        self._save_states_cache()
+                    return True
                 logger.info(f"Removing personal RDP access for user: {username} (OS account kept intact)")
                 script_dir = helper_dir()
                 manage_script = script_dir / "manage-personal-rdp.sh"
@@ -819,6 +878,14 @@ class UserManager:
         """
         try:
             if self._is_personal_user(username):
+                personal_meta = self._load_personal_users().get(username, {})
+                if personal_meta.get('mode') == 'live':
+                    from rdp_session_manager.infrastructure import live_desktop
+                    live_desktop.stop_live_rdp(personal_meta.get('backend') or None)
+                    self._save_personal_user(username, False)
+                    UserManager._user_states_cache[username] = False
+                    self._save_states_cache()
+                    return True
                 logger.info(f"Disabling personal RDP access for: {username} (OS account untouched)")
                 script_dir = helper_dir()
                 manage_script = script_dir / "manage-personal-rdp.sh"
@@ -881,6 +948,17 @@ class UserManager:
         """
         try:
             if self._is_personal_user(username):
+                personal_meta = self._load_personal_users().get(username, {})
+                if personal_meta.get('mode') == 'live':
+                    from rdp_session_manager.infrastructure import live_desktop
+                    port = int(personal_meta.get('port', 3390))
+                    backend = personal_meta.get('backend') or None
+                    if not live_desktop.start_live_rdp(username, port=port, backend=backend):
+                        return False
+                    self._save_personal_user(username, True)
+                    UserManager._user_states_cache[username] = True
+                    self._save_states_cache()
+                    return True
                 logger.info(f"Enabling personal RDP access for: {username}")
                 script_dir = helper_dir()
                 manage_script = script_dir / "manage-personal-rdp.sh"
@@ -1262,23 +1340,31 @@ class UserManager:
             return self.app_config.get_default_rdp_port()
         return 3389  # Fallback
 
-    def _build_rdp_user(self, user_info, enabled_override: Optional[bool] = None) -> RDPUser:
-        session_type, desktop_env_or_cmd, app_args = self._detect_session_info(user_info.pw_dir)
+    def _build_rdp_user(self, user_info, enabled_override: Optional[bool] = None, personal_meta: Optional[Dict] = None) -> RDPUser:
+        is_personal = self._is_personal_home(user_info.pw_dir)
+        personal_mode = (personal_meta or {}).get('mode', 'xrdp') if is_personal else 'xrdp'
 
-        if session_type in ['remoteapp', 'winege-remoteapp']:
-            desktop_env = session_type
-            app_command = desktop_env_or_cmd
-        else:
-            desktop_env = desktop_env_or_cmd
+        if personal_mode == 'live':
+            session_type = 'desktop'
+            desktop_env = (os.environ.get('XDG_CURRENT_DESKTOP') or 'live').split(':')[0].lower() or 'live'
             app_command = ''
             app_args = ''
+            rdp_port = int((personal_meta or {}).get('port', 3390))
+        else:
+            session_type, desktop_env_or_cmd, app_args = self._detect_session_info(user_info.pw_dir)
+            if session_type in ['remoteapp', 'winege-remoteapp']:
+                desktop_env = session_type
+                app_command = desktop_env_or_cmd
+            else:
+                desktop_env = desktop_env_or_cmd
+                app_command = ''
+                app_args = ''
+            rdp_port = self._detect_rdp_port(user_info.pw_uid)
 
-        rdp_port = self._detect_rdp_port(user_info.pw_uid)
-        is_personal = self._is_personal_home(user_info.pw_dir)
         if enabled_override is not None:
             is_enabled = enabled_override
         elif is_personal:
-            is_enabled = True
+            is_enabled = bool((personal_meta or {}).get('enabled', True))
         else:
             is_enabled = self._check_user_enabled_from_shadow(user_info.pw_name)
 
@@ -1289,7 +1375,7 @@ class UserManager:
             default_de=desktop_env,
             default_cmd=app_command,
             default_args=app_args
-        )
+        ) if personal_mode != 'live' else []
 
         return RDPUser(
             username=user_info.pw_name,
@@ -1305,12 +1391,14 @@ class UserManager:
             app_args=app_args,
             profiles=profiles,
             is_personal=is_personal,
+            personal_mode=personal_mode,
         )
 
     def list_users(self) -> List[RDPUser]:
         """Lista todos os usuários RDP"""
         users = []
         seen_usernames = set()
+        personal_map = self._load_personal_users()
 
         try:
             rdp_group = None
@@ -1323,18 +1411,20 @@ class UserManager:
                 members = set(rdp_group.gr_mem)
                 for user_info in pwd.getpwall():
                     if user_info.pw_name in members or user_info.pw_gid == rdp_group.gr_gid:
-                        users.append(self._build_rdp_user(user_info))
+                        meta = personal_map.get(user_info.pw_name)
+                        users.append(self._build_rdp_user(user_info, personal_meta=meta))
                         seen_usernames.add(user_info.pw_name)
 
-            # Incluir usuários pessoais desabilitados (removidos do grupo rdp-users)
-            for personal_username in self._load_personal_users():
+            # Incluir usuários pessoais (modo live ou xrdp desabilitado)
+            for personal_username, meta in personal_map.items():
                 if personal_username in seen_usernames:
                     continue
                 try:
                     user_info = pwd.getpwnam(personal_username)
                 except KeyError:
                     continue
-                users.append(self._build_rdp_user(user_info, enabled_override=False))
+                enabled_val = meta.get('enabled', False) if meta.get('mode') == 'live' else False
+                users.append(self._build_rdp_user(user_info, enabled_override=enabled_val, personal_meta=meta))
                 seen_usernames.add(personal_username)
 
         except Exception as e:

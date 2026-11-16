@@ -64,6 +64,9 @@ mkdir -p "${BUILD_DIR}/usr/bin"
 mkdir -p "${BUILD_DIR}/usr/share/${APP_NAME}"
 mkdir -p "${BUILD_DIR}/usr/share/applications"
 mkdir -p "${BUILD_DIR}/usr/share/icons/hicolor/scalable/apps"
+mkdir -p "${BUILD_DIR}/usr/share/icons/hicolor/512x512/apps"
+mkdir -p "${BUILD_DIR}/usr/share/icons/hicolor/256x256/apps"
+mkdir -p "${BUILD_DIR}/usr/share/pixmaps"
 mkdir -p "${BUILD_DIR}/usr/share/polkit-1/actions"
 mkdir -p "${BUILD_DIR}/usr/share/glib-2.0/schemas"
 mkdir -p "${BUILD_DIR}/usr/share/metainfo"
@@ -126,8 +129,12 @@ chmod +x "${BUILD_DIR}/usr/bin/rdpsm"
     "${BUILD_DIR}/usr/share/applications/com.rdp.SessionManager.desktop"
 
 # Copy icon
-[ -f "imgs/RDPSM.png" ] && \
+if [ -f "imgs/RDPSM.png" ]; then
     cp imgs/RDPSM.png "${BUILD_DIR}/usr/share/icons/hicolor/scalable/apps/com.rdp.SessionManager.png"
+    cp imgs/RDPSM.png "${BUILD_DIR}/usr/share/icons/hicolor/512x512/apps/com.rdp.SessionManager.png"
+    cp imgs/RDPSM.png "${BUILD_DIR}/usr/share/icons/hicolor/256x256/apps/com.rdp.SessionManager.png"
+    cp imgs/RDPSM.png "${BUILD_DIR}/usr/share/pixmaps/com.rdp.SessionManager.png"
+fi
 
 # Copy other files
 [ -f "data/com.rdp.SessionManager.policy" ] && \

@@ -82,7 +82,8 @@ class RDPUser:
                  is_superuser: bool = False, session_type: str = 'desktop',
                  app_command: str = '', app_args: str = '',
                  profiles: Optional[List[ConnectionProfile]] = None,
-                 is_personal: bool = False):
+                 is_personal: bool = False,
+                 personal_mode: str = 'xrdp'):
         self.username = username
         self.uid = uid
         self.home_dir = home_dir
@@ -91,6 +92,7 @@ class RDPUser:
         self.enabled = enabled  # Se a conta está habilitada (não bloqueada)
         self.is_superuser = is_superuser  # Se o usuário tem privilégios sudo
         self.is_personal = is_personal  # Se é conta pessoal/existente fora de /opt/rdp-users
+        self.personal_mode = personal_mode  # 'xrdp' ou 'live'
         self.profiles = profiles or []
 
         # Se profiles estiver vazio, gera o perfil padrão baseado em session_type
@@ -161,6 +163,7 @@ class RDPUser:
             'enabled': self.enabled,
             'is_superuser': self.is_superuser,
             'is_personal': self.is_personal,
+            'personal_mode': self.personal_mode,
             'session_type': self.session_type,
             'app_command': self.app_command,
             'app_args': self.app_args,

@@ -46,6 +46,7 @@ export USER="$USERNAME"
 export LOGNAME="$USERNAME"
 export XDG_SESSION_TYPE=x11
 unset WAYLAND_DISPLAY
+unset DBUS_SESSION_BUS_ADDRESS
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/var/lib/flatpak/exports/bin:\$PATH"
 export XDG_DATA_DIRS="/var/lib/snapd/desktop:/var/lib/flatpak/exports/share:$HOME_DIR/.local/share/flatpak/exports/share:/usr/local/share:/usr/share:\${XDG_DATA_DIRS:-}"
 if [ -f /etc/default/keyboard ]; then

@@ -47,7 +47,7 @@ class TestPersonalRDPUserManager(unittest.TestCase):
         cmd = run_mock.call_args[0][0]
         self.assertTrue(cmd[1].endswith("manage-personal-rdp.sh"))
         self.assertEqual(cmd[2:4], ["alice", "enable"])
-        self.assertTrue(self.manager._load_personal_users().get("alice"))
+        self.assertTrue(self.manager._load_personal_users()["alice"]["enabled"])
 
     def test_lock_and_unlock_personal_user_never_lock_os_account_or_kill_processes(self):
         ok_proc = SimpleNamespace(returncode=0, stdout="OK", stderr="")
@@ -62,13 +62,13 @@ class TestPersonalRDPUserManager(unittest.TestCase):
             self.assertTrue(disable_cmd[1].endswith("manage-personal-rdp.sh"))
             self.assertEqual(disable_cmd[2:4], ["alice", "disable"])
             kill_mock.assert_not_called()
-            self.assertFalse(self.manager._load_personal_users().get("alice"))
+            self.assertFalse(self.manager._load_personal_users()["alice"]["enabled"])
 
             self.assertTrue(self.manager.unlock_user("alice"))
             enable_cmd = run_mock.call_args[0][0]
             self.assertTrue(enable_cmd[1].endswith("manage-personal-rdp.sh"))
             self.assertEqual(enable_cmd[2:4], ["alice", "enable"])
-            self.assertTrue(self.manager._load_personal_users().get("alice"))
+            self.assertTrue(self.manager._load_personal_users()["alice"]["enabled"])
 
     def test_delete_personal_user_never_calls_delete_rdp_user_script(self):
         self.manager._save_personal_user("alice", True)
