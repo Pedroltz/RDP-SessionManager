@@ -1,5 +1,15 @@
 # Changelog - RDP Session Manager
 
+## [0.7.1] - 2026-11-16
+
+- Added personal account RDP configuration and Live Desktop Sharing for supported graphical sessions.
+- Configure UFW access for the detected local network when enabling GNOME sharing.
+- Enable the graphics pipeline and an empty domain for Live RDP client connections.
+- Explain local-session conflicts for XRDP and provide group access repair.
+- Report client connection errors and distinguish sharing credentials from Linux passwords.
+- Fix System Health checks for personal account home directories and Live sharing prerequisites.
+
+
 ## [0.7.0] - 2026-08-18
 
 - Added unified Operations & Health Diagnostics center (`rdpsm health` CLI and GTK dialog with filtering, search, and evidence inspection).
