@@ -17,7 +17,8 @@ DEFAULTS = {
         "memory_high_mb": 768,
         "memory_max_mb": 1280,
         "cpu_quota_percent": 100,
-        "tasks_max": 256,
+        # Includes threads, not just processes (Firefox needs more than 256).
+        "tasks_max": 1024,
     },
     "windows-standard": {
         "memory_high_mb": 1536,

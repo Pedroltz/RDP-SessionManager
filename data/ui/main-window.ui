@@ -23,6 +23,13 @@
               </object>
             </child>
 
+            <child type="start">
+              <object class="GtkButton" id="add_current_user_button">
+                <property name="icon-name">avatar-default-symbolic</property>
+                <property name="tooltip-text">Enable RDP for current user</property>
+              </object>
+            </child>
+
             <child type="end">
               <object class="GtkMenuButton" id="menu_button">
                 <property name="icon-name">open-menu-symbolic</property>
@@ -172,13 +179,27 @@
                         <property name="title">No RDP users</property>
                         <property name="description">Create your first RDP user to get started</property>
                         <child>
-                          <object class="GtkButton" id="empty_add_user_button">
-                            <property name="label">Create User</property>
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">12</property>
                             <property name="halign">center</property>
-                            <style>
-                              <class name="pill"/>
-                              <class name="suggested-action"/>
-                            </style>
+                            <child>
+                              <object class="GtkButton" id="empty_add_user_button">
+                                <property name="label">Create User</property>
+                                <style>
+                                  <class name="pill"/>
+                                  <class name="suggested-action"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkButton" id="empty_add_current_user_button">
+                                <property name="label">Use Current User</property>
+                                <style>
+                                  <class name="pill"/>
+                                </style>
+                              </object>
+                            </child>
                           </object>
                         </child>
                       </object>

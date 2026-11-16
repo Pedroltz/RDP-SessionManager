@@ -18,6 +18,12 @@ if [ -z "$USERNAME" ]; then
     exit 1
 fi
 
+HOME_DIR=$(getent passwd "$USERNAME" | cut -d: -f6 || true)
+if [ "$HOME_DIR" != "/opt/rdp-users/$USERNAME" ]; then
+    echo "Error: Refusing to delete non-RDPSM user '$USERNAME' (home: '${HOME_DIR:-unknown}')." >&2
+    exit 1
+fi
+
 # Processar flags
 shift
 while [ $# -gt 0 ]; do

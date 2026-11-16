@@ -1,0 +1,1866 @@
+#!/usr/bin/env python3
+"""
+Módulo de gerenciamento de usuários RDP
+"""
+
+from rdp_session_manager.infrastructure.commands import run_command
+
+import os
+import pwd
+import grp
+import json
+import subprocess
+import logging
+from pathlib import Path
+from typing import List, Dict, Optional
+
+from rdp_session_manager.infrastructure.desktop_environments import (
+    SUPPORTED_DESKTOPS,
+    get_startup_command,
+    normalize_desktop_id,
+)
+from rdp_session_manager.infrastructure.polkit import get_privilege_command
+from rdp_session_manager.infrastructure.audit import audited_command
+
+from rdp_session_manager.infrastructure.paths import helper_dir
+from rdp_session_manager.infrastructure.persistence import UserStateRepository
+from rdp_session_manager.infrastructure.user_profiles import ProfileRepository
+
+logger = logging.getLogger(__name__)
+
+
+from rdp_session_manager.domain.users import ConnectionProfile, RDPUser
+
+
+class UserManager:
+    """Gerenciador de usuários RDP"""
+
+    # UID inicial para usuários RDP (fora da faixa de usuários normais)
+    RDP_UID_START = 5000
+
+    # Cache de estados de usuários (enabled/disabled)
+    # Usado quando não temos permissão para verificar /etc/shadow
+    _user_states_cache = {}
+    RDP_GID_NAME = "rdp-users"
+
+    def __init__(self, app_config=None, rdp_users_home: str = "/opt/rdp-users"):
+        self.app_config = app_config
+        self.rdp_users_home = Path(rdp_users_home)
+        # Cache persistente de estados de usuários
+        self.states_cache_file = Path.home() / ".config" / "rdp-session-manager" / "user_states.json"
+        self.personal_users_file = Path.home() / ".config" / "rdp-session-manager" / "personal_rdp_users.json"
+        self._ensure_base_setup()
+        self._load_states_cache()
+
+    def _ensure_base_setup(self):
+        """Garante que a estrutura base existe"""
+        try:
+            # Criar diretório base se não existir
+            if not self.rdp_users_home.exists():
+                logger.info(f"Creating base directory: {self.rdp_users_home}")
+                # Será criado via PolicyKit helper
+
+            # Garantir que o grupo rdp-users existe
+            self._ensure_rdp_group()
+
+        except Exception as e:
+            logger.error(f"Error configuring base structure: {e}")
+
+    def _ensure_rdp_group(self) -> int:
+        """Garante que o grupo rdp-users existe"""
+        try:
+            group = grp.getgrnam(self.RDP_GID_NAME)
+            return group.gr_gid
+        except KeyError:
+            # Grupo não existe, precisa ser criado via PolicyKit
+            logger.warning(f"Group {self.RDP_GID_NAME} does not exist")
+            return -1
+
+    def _load_states_cache(self):
+        self._persisted_states = UserStateRepository(self.states_cache_file).load()
+        UserManager._user_states_cache.update(self._persisted_states)
+
+    def _save_states_cache(self):
+        previous = getattr(self, '_persisted_states', {})
+        current = UserManager._user_states_cache
+        changes = {key: value for key, value in current.items() if previous.get(key) != value}
+        removed = set(previous) - set(current)
+        try:
+            self._persisted_states = UserStateRepository(self.states_cache_file).update(changes, removed)
+        except OSError as exc:
+            logger.error('Error saving account states: %s', exc)
+
+    def get_current_username(self) -> str:
+        """Return the username of the current OS user."""
+        try:
+            return pwd.getpwuid(os.getuid()).pw_name
+        except KeyError:
+            return os.environ.get("USER", "")
+
+    def _is_personal_home(self, home_dir: str) -> bool:
+        """Return True when home_dir is outside the managed /opt/rdp-users root."""
+        if not home_dir:
+            return False
+        try:
+            return Path(home_dir).resolve().parent != self.rdp_users_home.resolve()
+        except OSError:
+            return not str(home_dir).startswith(str(self.rdp_users_home).rstrip("/") + "/")
+
+    def _is_personal_user(self, username: str) -> bool:
+        """Return True when username is an existing OS account outside /opt/rdp-users."""
+        if username == self.get_current_username():
+            return True
+        try:
+            user_info = pwd.getpwnam(username)
+            return self._is_personal_home(user_info.pw_dir)
+        except KeyError:
+            return False
+
+    def _load_personal_users(self) -> Dict[str, Dict]:
+        if not self.personal_users_file.exists():
+            return {}
+        try:
+            data = json.loads(self.personal_users_file.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        normalized: Dict[str, Dict] = {}
+        for key, value in data.items():
+            if isinstance(value, bool):
+                normalized[key] = {"enabled": value, "mode": "xrdp", "port": 3389, "backend": ""}
+            elif isinstance(value, dict):
+                normalized[key] = {
+                    "enabled": bool(value.get("enabled", True)),
+                    "mode": value.get("mode", "xrdp"),
+                    "port": int(value.get("port", 3390 if value.get("mode") == "live" else 3389)),
+                    "backend": value.get("backend", ""),
+                }
+        return normalized
+
+    def _write_personal_users(self, data: Dict[str, Dict]):
+        try:
+            self.personal_users_file.parent.mkdir(parents=True, exist_ok=True)
+            self.personal_users_file.write_text(json.dumps(data, indent=2), encoding='utf-8')
+        except OSError as exc:
+            logger.error('Error saving personal RDP user state: %s', exc)
+
+    def _save_personal_user(self, username: str, enabled: bool, mode: Optional[str] = None, port: Optional[int] = None, backend: Optional[str] = None):
+        data = self._load_personal_users()
+        existing = data.get(username, {})
+        resolved_mode = mode or existing.get("mode", "xrdp")
+        resolved_port = port if port is not None else existing.get("port", 3390 if resolved_mode == "live" else 3389)
+        resolved_backend = backend if backend is not None else existing.get("backend", "")
+        data[username] = {
+            "enabled": bool(enabled),
+            "mode": resolved_mode,
+            "port": int(resolved_port),
+            "backend": resolved_backend,
+        }
+        self._write_personal_users(data)
+
+    def _remove_personal_user_record(self, username: str):
+        data = self._load_personal_users()
+        if username in data:
+            del data[username]
+            self._write_personal_users(data)
+
+    def enable_personal_rdp(
+        self,
+        username: Optional[str] = None,
+        desktop_env: str = 'xfce',
+        session_type: str = 'desktop',
+        app_command: str = '',
+        app_args: str = '',
+        mode: str = 'xrdp',
+        port: int = 3390,
+        password: str = '',
+    ) -> Optional[RDPUser]:
+        """Configure RDP access for an existing personal OS user without modifying their OS account."""
+        import tempfile
+        from rdp_session_manager.infrastructure import live_desktop
+
+        target_user = username or self.get_current_username()
+        if not target_user:
+            raise ValueError("Could not determine the current OS user")
+
+        try:
+            user_info = pwd.getpwnam(target_user)
+        except KeyError as exc:
+            raise ValueError(f"System user does not exist: {target_user}") from exc
+
+        if user_info.pw_uid < 1000:
+            raise ValueError(f"Refusing to enable personal RDP for system user: {target_user}")
+        if not self._is_personal_home(user_info.pw_dir):
+            raise ValueError(f"User {target_user} is already a managed /opt/rdp-users account")
+
+        if mode == 'live':
+            backend_info = live_desktop.detect_live_session_backend()
+            backend_name = backend_info['backend']
+            if not live_desktop.is_backend_installed(backend_name):
+                raise RuntimeError(f"Live desktop backend '{backend_name}' is not installed")
+            if not live_desktop.start_live_rdp(target_user, port=port, password=password, backend=backend_name):
+                raise Exception(f"Failed to start live desktop sharing via {backend_name}")
+            self._save_personal_user(target_user, True, mode='live', port=port, backend=backend_name)
+            UserManager._user_states_cache[target_user] = True
+            self._save_states_cache()
+            return self.get_user(target_user)
+
+        de_normalized = normalize_desktop_id(desktop_env) if session_type == 'desktop' else desktop_env
+        if session_type == 'desktop':
+            profile_name = f"Desktop ({de_normalized.upper()})"
+        elif session_type == 'remoteapp':
+            profile_name = f"RemoteApp ({app_command})"
+        else:
+            profile_name = "Windows App (umu)"
+
+        profile = ConnectionProfile(
+            profile_id="default",
+            name=profile_name,
+            profile_type=session_type,
+            desktop_env=de_normalized,
+            app_command=app_command,
+            app_args=app_args,
+            is_default=True,
+        )
+
+        script_dir = helper_dir()
+        manage_script = script_dir / "manage-personal-rdp.sh"
+        _, priv_cmd = get_privilege_command()
+
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as tf:
+                json.dump([profile.to_dict()], tf, indent=2)
+                temp_path = tf.name
+
+            cmd = priv_cmd + [str(manage_script), target_user, 'enable', temp_path]
+            result = run_command(cmd, capture_output=True, text=True, timeout=60)
+            if result.returncode != 0:
+                detail = result.stderr.strip() or result.stdout.strip() or "Failed to enable personal RDP"
+                raise Exception(detail)
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+
+        self._save_personal_user(target_user, True, mode='xrdp', port=self._detect_rdp_port(user_info.pw_uid), backend='')
+        UserManager._user_states_cache[target_user] = True
+        self._save_states_cache()
+        return self.get_user(target_user)
+
+    def _get_next_uid(self) -> int:
+        """Obtém o próximo UID disponível para usuários RDP"""
+        existing_uids = [user.uid for user in self.list_users()]
+
+        uid = self.RDP_UID_START
+        while uid in existing_uids:
+            uid += 1
+
+        return uid
+
+    def create_user(self, username: str, password: str, desktop_env: str,
+                   full_name: str = "", session_type: str = 'desktop',
+                   app_command: str = '', app_args: str = '', log_callback=None) -> Optional[RDPUser]:
+        """
+        Cria um novo usuário RDP
+
+        Args:
+            username: Nome de usuário
+            password: Senha do usuário
+            desktop_env: Ambiente desktop (gnome, xfce, kde) - usado apenas se session_type='desktop'
+            full_name: Nome completo do usuário
+            session_type: Tipo de sessão ('desktop', 'remoteapp', ou 'winege-remoteapp')
+            app_command: Comando do aplicativo para RemoteApp (ex: 'firefox') ou caminho .exe para WineGE
+            app_args: Argumentos do aplicativo (ex: '--private-window')
+
+        Returns:
+            RDPUser se sucesso, None se falha
+        """
+        logger.info("=" * 70)
+        logger.info("USER_MANAGER: create_user() called")
+        logger.info(f"  - Username: {username}")
+        logger.info(f"  - Session Type: {session_type}")
+        if session_type == 'desktop':
+            logger.info(f"  - Desktop ENV: {desktop_env}")
+        else:
+            logger.info(f"  - App Command: {app_command}")
+            logger.info("  - App Args: [redacted]")
+        logger.info(f"  - Full name: {full_name}")
+        logger.info("=" * 70)
+
+        try:
+            def log(msg):
+                logger.info(f"USER_MANAGER: {msg}")
+                if log_callback:
+                    log_callback(msg)
+
+            if not password or '\n' in password or '\r' in password:
+                raise ValueError("RDP password must be a non-empty single line")
+
+            if session_type == 'desktop':
+                desktop_env = normalize_desktop_id(desktop_env)
+                if desktop_env not in SUPPORTED_DESKTOPS:
+                    raise ValueError(
+                        f"Unsupported desktop environment '{desktop_env}'. "
+                        f"Options: {', '.join(SUPPORTED_DESKTOPS)}"
+                    )
+
+            # Validar nome de usuário
+            log("→ Validating username...")
+            if not self._validate_username(username):
+                logger.error(f"Invalid username: {username}")
+                raise ValueError(f"Invalid username: {username}")
+            log("  OK Valid username")
+
+            # Verificar se usuário já existe
+            log("→ Checking whether the user already exists...")
+            if self.user_exists(username):
+                logger.error(f"User already exists: {username}")
+                raise ValueError(f"User already exists: {username}")
+            log("  OK Username is available")
+
+            # Obter UID e porta global
+            log("→ Alocando UID...")
+            uid = self._get_next_uid()
+            home_dir = str(self.rdp_users_home / username)
+
+            # Obter porta da configuração global
+            rdp_port = self.app_config.get_default_rdp_port() if self.app_config else 3389
+
+            log(f"  UID: {uid}")
+            log(f"  RDP port: {rdp_port} (global port)")
+            log(f"  Home: {home_dir}")
+
+            rdp_user = RDPUser(
+                username=username,
+                uid=uid,
+                home_dir=home_dir,
+                desktop_env=desktop_env,
+                rdp_port=rdp_port,
+                active=False,
+                is_superuser=False,
+                session_type=session_type,
+                app_command=app_command,
+                app_args=app_args
+            )
+
+            # Group, base directory, account, password, profile, session
+            # wrapper and optional Windows runtime are provisioned by one
+            # privileged helper invocation.
+            log("")
+            log("→ Creating the system user...")
+            privilege_method, _ = get_privilege_command()
+            auth_name = "pkexec" if privilege_method == "pkexec" else "sudo"
+            log(f"  WARNING Authenticate once with {auth_name}")
+            success = self._create_system_user(username, password, uid, home_dir, full_name, desktop_env,
+                                               session_type, app_command, app_args,
+                                               profiles=rdp_user.profiles, log_callback=log)
+
+            if not success:
+                detail = getattr(self, '_last_create_error', '')
+                message = "Failed to create system user"
+                if detail:
+                    message += f": {detail}"
+                raise Exception(message)
+
+            log("")
+            log("OK System user created successfully!")
+            logger.info("=" * 70)
+            logger.info("USER_MANAGER: SUCCESS - RDP user created!")
+            logger.info(f"  - Username: {username}")
+            logger.info(f"  - UID: {uid}")
+            logger.info(f"  - RDP port: {rdp_port}")
+            logger.info(f"  - Home: {home_dir}")
+            logger.info(f"  - Desktop ENV: {desktop_env}")
+            logger.info("=" * 70)
+
+            # Adicionar ao cache como habilitado (usuários novos são criados habilitados)
+            UserManager._user_states_cache[username] = True
+            self._save_states_cache()
+
+            return rdp_user
+
+        except Exception as e:
+            logger.error("=" * 70)
+            logger.error(f"USER_MANAGER: ERROR creating user {username}")
+            logger.error(f"  - Exception: {type(e).__name__}")
+            logger.error(f"  - Message: {e}")
+            logger.error("=" * 70)
+            if log_callback:
+                log_callback(f"X ERROR: {e}")
+            raise
+
+
+
+    def _create_system_user(self, username: str, password: str, uid: int,
+                           home_dir: str, full_name: str, desktop_env: str,
+                           session_type: str = 'desktop', app_command: str = '',
+                           app_args: str = '',
+                           profiles: Optional[List[ConnectionProfile]] = None,
+                           log_callback=None) -> bool:
+        """Create an RDP user through one privileged helper invocation."""
+        temp_path = None
+        try:
+            import tempfile
+
+            self._last_create_error = ''
+            # Obter caminho do script helper
+            script_dir = helper_dir()
+            create_script = script_dir / "create-rdp-user.sh"
+
+            # Obter comando de elevação apropriado (pkexec ou sudo)
+            priv_method, priv_cmd = get_privilege_command()
+            auth_msg = "pkexec" if priv_method == "pkexec" else "sudo"
+
+            de_command = get_startup_command(desktop_env)
+            if session_type == 'desktop' and de_command is None:
+                raise ValueError(f"Unsupported desktop environment '{desktop_env}'")
+
+            if log_callback:
+                log_callback("  → Creating user and configuring the system...")
+                log_callback(f"  WARNING You will be asked to authenticate ({auth_msg})")
+
+            # Executar script de criação de usuário
+            # Passar: username, uid, home_dir, full_name, session_type, de_command_or_app, app_args
+            if session_type in ['remoteapp', 'winege-remoteapp']:
+                session_command = app_command
+                extra_args = app_args
+            else:
+                session_command = de_command
+                extra_args = ""
+
+            profile_data = {
+                'schema_version': 2,
+                'profiles': [profile.to_dict() for profile in (profiles or [])],
+            }
+            with tempfile.NamedTemporaryFile(
+                'w', delete=False, suffix='.json', encoding='utf-8'
+            ) as temp_file:
+                json.dump(profile_data, temp_file, indent=2)
+                temp_file.write('\n')
+                temp_path = temp_file.name
+            os.chmod(temp_path, 0o600)
+
+            cmd = priv_cmd + [
+                str(create_script),
+                username,
+                str(uid),
+                home_dir,
+                full_name or "",
+                session_type,  # 'desktop' ou 'remoteapp'
+                session_command,  # Comando DE ou app
+                extra_args,  # Args do app (vazio para desktop)
+                temp_path,
+            ]
+
+            logger.info(f"Executando script helper: {create_script.name}")
+
+            # A criação do primeiro usuário pode aguardar locks de passwd/group
+            # logo após a instalação do sistema. Trinta segundos é curto demais
+            # para máquinas de CI e também para hosts mais lentos.
+            timeout_seconds = 1200 if session_type == 'winege-remoteapp' else 120
+            if session_type == 'winege-remoteapp':
+                logger.info("  WARNING The umu/Proton runtime may take 10–15 minutes to download")
+
+            try:
+                result = run_command(
+                    cmd,
+                    input=password + '\n',
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_seconds
+                )
+            except subprocess.TimeoutExpired as exc:
+                def _timeout_output(value):
+                    if not value:
+                        return ""
+                    if isinstance(value, bytes):
+                        return value.decode(errors='replace').strip()
+                    return value.strip()
+
+                partial_stdout = _timeout_output(exc.stdout)
+                partial_stderr = _timeout_output(exc.stderr)
+                if partial_stdout:
+                    logger.error("Partial helper stdout before timeout:\n%s", partial_stdout)
+                if partial_stderr:
+                    logger.error("Partial helper stderr before timeout:\n%s", partial_stderr)
+
+                timeout_message = (
+                    f"User creation helper timed out after {timeout_seconds} seconds"
+                )
+                if partial_stdout:
+                    timeout_message += f"; last output: {partial_stdout.splitlines()[-1]}"
+                raise RuntimeError(timeout_message) from exc
+
+            if result.returncode != 0:
+                # Verificar código de erro
+                if result.returncode == 126:
+                    error_msg = "Authentication canceled by the user"
+                elif result.returncode == 127:
+                    error_msg = "Helper script not found"
+                else:
+                    error_msg = f"Exit code: {result.returncode}, Error: {result.stderr.strip()}"
+
+                logger.error(f"User creation failed: {error_msg}")
+                self._last_create_error = error_msg
+                if log_callback:
+                    log_callback(f"  X Creation error: {error_msg}")
+                return False
+
+            # Exibir output do script
+            if result.stdout:
+                for line in result.stdout.strip().split('\n'):
+                    logger.info(f"  {line}")
+                    if log_callback:
+                        log_callback(f"  {line}")
+
+            logger.info(f"User {username} created successfully")
+            return True
+
+        except Exception as e:
+            self._last_create_error = str(e)
+            logger.error(f"Error creating system user: {e}")
+            if log_callback:
+                log_callback(f"  X Error: {e}")
+            return False
+        finally:
+            if temp_path:
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+
+    def diagnose_user(self, username: str) -> Dict:
+        """Return a non-privileged health snapshot for one managed account."""
+        result = {
+            'username': username,
+            'exists': False,
+            'managed': False,
+            'active': False,
+            'issues': [],
+        }
+        try:
+            account = pwd.getpwnam(username)
+        except KeyError:
+            result['issues'].append('System account does not exist')
+            return result
+
+        result['exists'] = True
+        expected_home = self.rdp_users_home / username
+        actual_home = Path(account.pw_dir)
+        try:
+            rdp_group = grp.getgrnam(self.RDP_GID_NAME)
+            in_group = (
+                account.pw_gid == rdp_group.gr_gid
+                or username in rdp_group.gr_mem
+            )
+        except KeyError:
+            in_group = False
+
+        personal = self._load_personal_users().get(username) if self._is_personal_home(str(actual_home)) else None
+        is_live = bool(personal and personal.get('mode') == 'live')
+        result['managed'] = bool(personal) or (in_group and actual_home == expected_home)
+        result['personal'] = bool(personal)
+        if not in_group and not is_live:
+            result['issues'].append(f"User is not in {self.RDP_GID_NAME}")
+        if actual_home != expected_home and not personal:
+            result['issues'].append(
+                f"Unexpected home directory: {actual_home}"
+            )
+
+        processes = self.get_user_processes(username)
+        result['active'] = bool(processes)
+        if processes:
+            result['issues'].append('User has active processes')
+
+        if is_live:
+            from rdp_session_manager.infrastructure.live_desktop import is_live_rdp_running
+            result['session_type'] = 'live'
+            if personal.get('enabled') and not is_live_rdp_running(personal.get('backend') or None):
+                result['issues'].append('Live Desktop Sharing is enabled but its service is stopped')
+            result['healthy'] = not result['issues']
+            return result
+
+        required = [
+            actual_home / '.xsession',
+            actual_home / '.xinitrc',
+            actual_home / '.rdp_profiles.json',
+        ]
+        session_type, app_command, _ = self._detect_session_info(str(actual_home))
+        result['session_type'] = session_type
+        result['app_command'] = app_command
+        if session_type == 'winege-remoteapp':
+            required.extend([
+                actual_home / '.launch_winege_app.sh',
+                actual_home / '.windows_runtime.json',
+            ])
+        missing = [str(path) for path in required if not path.exists()]
+        if missing:
+            result['issues'].append(
+                'Missing managed files: ' + ', '.join(missing)
+            )
+        result['healthy'] = result['managed'] and not result['issues']
+        return result
+
+    def repair_user(
+        self,
+        username: str,
+        password: str,
+        profiles: Optional[List[ConnectionProfile]] = None,
+        plan_id: str = '',
+    ) -> tuple[bool, str]:
+        """Repair a managed account with exactly one privilege escalation."""
+        import tempfile
+
+        if not password or '\n' in password or '\r' in password:
+            return False, 'RDP password must be a non-empty single line'
+
+        diagnosis = self.diagnose_user(username)
+        if not diagnosis['exists']:
+            return False, 'System account does not exist'
+        if not diagnosis['managed']:
+            if self._is_personal_user(username):
+                script_dir = helper_dir()
+                manage_script = script_dir / 'manage-personal-rdp.sh'
+                _, priv_cmd = get_privilege_command()
+                result = run_command(priv_cmd + [str(manage_script), username, 'enable'], capture_output=True, text=True, timeout=60)
+                if result.returncode != 0:
+                    return False, result.stderr.strip() or 'Failed to repair personal RDP configuration'
+                return True, 'Personal RDP configuration refreshed'
+            return False, 'Refusing to repair an unmanaged system account'
+        if diagnosis['active']:
+            return False, 'Disconnect the user before repairing it'
+
+        user = self.get_user(username)
+        if not user:
+            return False, 'Could not load the RDP user configuration'
+        selected_profiles = profiles or user.profiles
+        if not selected_profiles:
+            return False, 'No connection profile is available for repair'
+        default_profile = next(
+            (profile for profile in selected_profiles if profile.is_default),
+            selected_profiles[0],
+        )
+
+        script_dir = helper_dir()
+        repair_script = script_dir / 'repair-rdp-user.sh'
+        temp_path = None
+        try:
+            payload = {
+                'schema_version': 2,
+                'profiles': [profile.to_dict() for profile in selected_profiles],
+            }
+            with tempfile.NamedTemporaryFile(
+                'w', delete=False, suffix='.json', encoding='utf-8'
+            ) as temp_file:
+                json.dump(payload, temp_file, indent=2)
+                temp_file.write('\n')
+                temp_path = temp_file.name
+            os.chmod(temp_path, 0o600)
+
+            _, privilege = get_privilege_command()
+            command = privilege + [
+                str(repair_script),
+                username,
+                default_profile.profile_type,
+                default_profile.app_command,
+                temp_path,
+                plan_id,
+            ]
+            timeout = (
+                1200
+                if default_profile.profile_type == 'winege-remoteapp'
+                else 120
+            )
+            completed = run_command(
+                command,
+                input=password + '\n',
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if completed.returncode != 0:
+                message = completed.stderr.strip() or completed.stdout.strip()
+                return False, message or f'Repair exited with {completed.returncode}'
+            return True, completed.stdout.strip()
+        except subprocess.TimeoutExpired:
+            return False, 'Repair timed out'
+        except Exception as exc:
+            logger.error("Could not repair %s: %s", username, exc)
+            return False, str(exc)
+        finally:
+            if temp_path:
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+
+    def get_user_processes(self, username: str) -> List[int]:
+        """
+        Obtém lista de PIDs de processos do usuário
+
+        Args:
+            username: Nome do usuário
+
+        Returns:
+            Lista de PIDs
+        """
+        try:
+            result = run_command(
+                ['pgrep', '-u', username],
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode == 0:
+                # Retornar PIDs
+                pids = [int(pid) for pid in result.stdout.strip().split('\n') if pid]
+                return pids
+
+            # Se returncode != 0, não há processos
+            return []
+
+        except Exception as e:
+            logger.error(f"Error checking processes for user {username}: {e}")
+            return []
+
+    def kill_user_processes(self, username: str, force: bool = False) -> bool:
+        """
+        Mata todos os processos de um usuário
+
+        Args:
+            username: Nome do usuário
+            force: Se True, usa SIGKILL (-9), senão usa SIGTERM (-15)
+
+        Returns:
+            True se sucesso
+        """
+        try:
+            signal = '-9' if force else '-15'
+
+            logger.info(f"Terminating processes for user {username} (signal: {signal})...")
+
+            # Obter comando de elevação apropriado (pkexec ou sudo)
+            _, priv_cmd = get_privilege_command()
+
+            # Primeiro tentar SIGTERM
+            result = run_command(
+                audited_command(
+                    priv_cmd,
+                    'session.terminate',
+                    username,
+                    ['/usr/bin/pkill', signal, '-u', username],
+                    success_codes=(0, 1),
+                ),
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            # pkill retorna 0 se encontrou processos, 1 se não encontrou
+            # Ambos são ok
+            if result.returncode in [0, 1]:
+                logger.info(f"Processes for user {username} terminated")
+                return True
+            else:
+                logger.warning(f"pkill returned exit code {result.returncode}: {result.stderr}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error terminating processes for user {username}: {e}")
+            return False
+
+    def delete_user(self, username: str, remove_home: bool = True, kill_processes: bool = True) -> bool:
+        """
+        Remove um usuário RDP usando script helper
+
+        Args:
+            username: Nome do usuário
+            remove_home: Se True, remove o diretório home
+            kill_processes: Se True, mata processos do usuário antes de deletar
+
+        Returns:
+            True se sucesso, False se falha
+        """
+        try:
+            if not self.user_exists(username):
+                if username in self._load_personal_users():
+                    script_dir = helper_dir()
+                    manage_script = script_dir / "manage-personal-rdp.sh"
+                    _, priv_cmd = get_privilege_command()
+                    result = run_command(priv_cmd + [str(manage_script), username, 'remove'], capture_output=True, text=True, timeout=30)
+                    if result.returncode != 0:
+                        raise Exception(f"Failed to remove personal RDP access: {result.stderr}")
+                    self._remove_personal_user_record(username)
+                    if username in UserManager._user_states_cache:
+                        del UserManager._user_states_cache[username]
+                        self._save_states_cache()
+                    return True
+                logger.error(f"User does not exist: {username}")
+                raise ValueError(f"User does not exist: {username}")
+
+            if self._is_personal_user(username):
+                personal_meta = self._load_personal_users().get(username, {})
+                if personal_meta.get('mode') == 'live':
+                    from rdp_session_manager.infrastructure import live_desktop
+                    live_desktop.stop_live_rdp(personal_meta.get('backend') or None)
+                    self._remove_personal_user_record(username)
+                    if username in UserManager._user_states_cache:
+                        del UserManager._user_states_cache[username]
+                        self._save_states_cache()
+                    return True
+                logger.info(f"Removing personal RDP access for user: {username} (OS account kept intact)")
+                script_dir = helper_dir()
+                manage_script = script_dir / "manage-personal-rdp.sh"
+                _, priv_cmd = get_privilege_command()
+                result = run_command(priv_cmd + [str(manage_script), username, 'remove'], capture_output=True, text=True, timeout=30)
+                if result.returncode != 0:
+                    logger.error(f"Personal RDP removal failed: {result.stderr}")
+                    raise Exception(f"Failed to remove personal RDP access: {result.stderr}")
+                self._remove_personal_user_record(username)
+                if username in UserManager._user_states_cache:
+                    del UserManager._user_states_cache[username]
+                    self._save_states_cache()
+                return True
+
+            logger.info(f"Removing RDP user: {username}")
+
+            # Verificar se há processos ativos (apenas para log)
+            active_pids = self.get_user_processes(username)
+            if active_pids:
+                logger.info(f"User {username} has {len(active_pids)} active processes")
+
+            # Usar script helper que agrupa: pkill + userdel em uma única autenticação
+            script_dir = helper_dir()
+            delete_script = script_dir / "delete-rdp-user.sh"
+
+            # Obter comando de elevação apropriado (pkexec ou sudo)
+            _, priv_cmd = get_privilege_command()
+
+            # Montar comando com flags
+            cmd = priv_cmd + [str(delete_script), username]
+
+            if remove_home:
+                cmd.append('--remove-home')
+
+            if kill_processes:
+                cmd.append('--kill-processes')
+
+            logger.info(f"Executando script helper para deletar {username}...")
+            result = run_command(cmd, capture_output=True, text=True, timeout=30)
+
+            if result.returncode != 0:
+                logger.error(f"Deletion failed: {result.stderr}")
+                raise Exception(f"Failed to remove user: {result.stderr}")
+
+            # Exibir output do script
+            if result.stdout:
+                for line in result.stdout.strip().split('\n'):
+                    logger.info(f"  {line}")
+
+            logger.info(f"OK User {username} removed successfully")
+            logger.info(f"  - Home directory removed: {remove_home}")
+            logger.info(f"  - Processos terminados: {kill_processes}")
+
+            # Remover do cache e persistir
+            if username in UserManager._user_states_cache:
+                del UserManager._user_states_cache[username]
+                self._save_states_cache()
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error removing user {username}: {e}")
+            raise
+
+    def lock_user(self, username: str, kill_sessions: bool = True) -> bool:
+        """
+        Desabilita (bloqueia) um usuário RDP e encerra suas sessões ativas
+
+        Args:
+            username: Nome do usuário
+            kill_sessions: Se True, mata sessões/processos ativos do usuário ao desabilitar
+
+        Returns:
+            True se sucesso, False se falha
+        """
+        try:
+            if self._is_personal_user(username):
+                personal_meta = self._load_personal_users().get(username, {})
+                if personal_meta.get('mode') == 'live':
+                    from rdp_session_manager.infrastructure import live_desktop
+                    live_desktop.stop_live_rdp(personal_meta.get('backend') or None)
+                    self._save_personal_user(username, False)
+                    UserManager._user_states_cache[username] = False
+                    self._save_states_cache()
+                    return True
+                logger.info(f"Disabling personal RDP access for: {username} (OS account untouched)")
+                script_dir = helper_dir()
+                manage_script = script_dir / "manage-personal-rdp.sh"
+                _, priv_cmd = get_privilege_command()
+                result = run_command(priv_cmd + [str(manage_script), username, 'disable'], capture_output=True, text=True, timeout=30)
+                if result.returncode != 0:
+                    logger.error(f"Failed to disable personal RDP: {result.stderr}")
+                    return False
+                self._save_personal_user(username, False)
+                UserManager._user_states_cache[username] = False
+                self._save_states_cache()
+                return True
+
+            if not self.user_exists(username):
+                logger.error(f"User does not exist: {username}")
+                return False
+
+            logger.info(f"Disabling user: {username}")
+
+            # Usar script helper para lock
+            script_dir = helper_dir()
+            toggle_script = script_dir / "toggle-user-lock.sh"
+
+            # Obter comando de elevação apropriado (pkexec ou sudo)
+            _, priv_cmd = get_privilege_command()
+
+            cmd = priv_cmd + [str(toggle_script), username, 'lock']
+
+            result = run_command(cmd, capture_output=True, text=True, timeout=30)
+
+            if result.returncode != 0:
+                logger.error(f"Failed to disable user: {result.stderr}")
+                return False
+
+            if kill_sessions:
+                # Garantir encerramento de processos remanescentes se houver
+                self.kill_user_processes(username, force=False)
+
+            logger.info(f"OK User {username} disabled successfully")
+
+            # Atualizar cache em memória e persistir em arquivo
+            UserManager._user_states_cache[username] = False
+            self._save_states_cache()
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error disabling user {username}: {e}")
+            return False
+
+    def unlock_user(self, username: str) -> bool:
+        """
+        Habilita (desbloqueia) um usuário RDP
+
+        Args:
+            username: Nome do usuário
+
+        Returns:
+            True se sucesso, False se falha
+        """
+        try:
+            if self._is_personal_user(username):
+                personal_meta = self._load_personal_users().get(username, {})
+                if personal_meta.get('mode') == 'live':
+                    from rdp_session_manager.infrastructure import live_desktop
+                    port = int(personal_meta.get('port', 3390))
+                    backend = personal_meta.get('backend') or None
+                    if not live_desktop.start_live_rdp(username, port=port, backend=backend):
+                        return False
+                    self._save_personal_user(username, True)
+                    UserManager._user_states_cache[username] = True
+                    self._save_states_cache()
+                    return True
+                logger.info(f"Enabling personal RDP access for: {username}")
+                script_dir = helper_dir()
+                manage_script = script_dir / "manage-personal-rdp.sh"
+                _, priv_cmd = get_privilege_command()
+                result = run_command(priv_cmd + [str(manage_script), username, 'enable'], capture_output=True, text=True, timeout=30)
+                if result.returncode != 0:
+                    logger.error(f"Failed to enable personal RDP: {result.stderr}")
+                    return False
+                self._save_personal_user(username, True)
+                UserManager._user_states_cache[username] = True
+                self._save_states_cache()
+                return True
+
+            if not self.user_exists(username):
+                logger.error(f"User does not exist: {username}")
+                return False
+
+            logger.info(f"Enabling user: {username}")
+
+            # Usar script helper para unlock
+            script_dir = helper_dir()
+            toggle_script = script_dir / "toggle-user-lock.sh"
+
+            # Obter comando de elevação apropriado (pkexec ou sudo)
+            _, priv_cmd = get_privilege_command()
+
+            cmd = priv_cmd + [str(toggle_script), username, 'unlock']
+
+            result = run_command(cmd, capture_output=True, text=True, timeout=30)
+
+            if result.returncode != 0:
+                logger.error(f"Failed to enable user: {result.stderr}")
+                return False
+
+            logger.info(f"OK User {username} enabled successfully")
+
+            # Atualizar cache em memória e persistir em arquivo
+            UserManager._user_states_cache[username] = True
+            self._save_states_cache()
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error enabling user {username}: {e}")
+            return False
+
+    def grant_sudo(self, username: str, kill_sessions: bool = True) -> bool:
+        """
+        Concede privilégios de superusuário (sudo) para um usuário RDP
+
+        Args:
+            username: Nome do usuário
+            kill_sessions: Se True, encerra sessões ativas para aplicar mudanças
+
+        Returns:
+            True se sucesso, False se falha
+        """
+        try:
+            if not self.user_exists(username):
+                logger.error(f"User does not exist: {username}")
+                return False
+
+            logger.info(f"Granting sudo privileges to: {username}")
+
+            # Verificar se usuário tem processos ativos
+            active_pids = self.get_user_processes(username)
+            if active_pids and kill_sessions:
+                logger.info(f"User {username} has {len(active_pids)} active processes—they will be terminated")
+                logger.info("IMPORTANT: Group changes only take effect after logout/login")
+
+            # Usar script helper para conceder sudo
+            script_dir = helper_dir()
+            sudo_script = script_dir / "toggle-user-sudo.sh"
+
+            # Obter comando de elevação apropriado (pkexec ou sudo)
+            _, priv_cmd = get_privilege_command()
+
+            cmd = priv_cmd + [str(sudo_script), username, 'grant']
+
+            result = run_command(cmd, capture_output=True, text=True, timeout=30)
+
+            if result.returncode != 0:
+                logger.error(f"Failed to grant sudo privileges: {result.stderr}")
+                return False
+
+            logger.info(f"OK Sudo privileges granted to {username}")
+
+            # Encerrar sessões ativas para forçar reconexão
+            if active_pids and kill_sessions:
+                logger.info(f"Terminating sessions for {username} to apply changes...")
+                self.kill_user_processes(username, force=False)
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error granting sudo privileges to {username}: {e}")
+            return False
+
+    def revoke_sudo(self, username: str, kill_sessions: bool = True) -> bool:
+        """
+        Revoga privilégios de superusuário (sudo) de um usuário RDP
+
+        Args:
+            username: Nome do usuário
+            kill_sessions: Se True, encerra sessões ativas para aplicar mudanças
+
+        Returns:
+            True se sucesso, False se falha
+        """
+        try:
+            if not self.user_exists(username):
+                logger.error(f"User does not exist: {username}")
+                return False
+
+            logger.info(f"Revoking sudo privileges from: {username}")
+
+            # Verificar se usuário tem processos ativos
+            active_pids = self.get_user_processes(username)
+            if active_pids and kill_sessions:
+                logger.info(f"User {username} has {len(active_pids)} active processes—they will be terminated")
+                logger.info("IMPORTANT: Group changes only take effect after logout/login")
+
+            # Usar script helper para revogar sudo
+            script_dir = helper_dir()
+            sudo_script = script_dir / "toggle-user-sudo.sh"
+
+            # Obter comando de elevação apropriado (pkexec ou sudo)
+            _, priv_cmd = get_privilege_command()
+
+            cmd = priv_cmd + [str(sudo_script), username, 'revoke']
+
+            result = run_command(cmd, capture_output=True, text=True, timeout=30)
+
+            if result.returncode != 0:
+                logger.error(f"Failed to revoke sudo privileges: {result.stderr}")
+                return False
+
+            logger.info(f"OK Sudo privileges revoked from {username}")
+
+            # Encerrar sessões ativas para forçar reconexão
+            if active_pids and kill_sessions:
+                logger.info(f"Terminating sessions for {username} to apply changes...")
+                self.kill_user_processes(username, force=False)
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error revoking sudo privileges from {username}: {e}")
+            return False
+
+    def is_superuser(self, username: str) -> bool:
+        """
+        Verifica se um usuário tem privilégios de superusuário (está no grupo sudo)
+
+        Args:
+            username: Nome do usuário
+
+        Returns:
+            True se o usuário tem privilégios sudo, False caso contrário
+        """
+        try:
+            # Usar 'id -nG' para obter todos os grupos do usuário de forma confiável
+            # Este comando retorna todos os grupos, incluindo secundários
+            result = run_command(
+                ['id', '-nG', username],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            if result.returncode == 0:
+                # Obter lista de grupos
+                groups = result.stdout.strip().split()
+                # Verificar se 'sudo' está na lista
+                has_sudo = 'sudo' in groups
+                logger.debug(f"User {username} groups: {groups}, has sudo: {has_sudo}")
+                return has_sudo
+
+            # Se o comando falhou, tentar método alternativo
+            logger.warning(f"Command 'id -nG {username}' failed, trying alternative method")
+
+            # Método alternativo: verificar diretamente no grupo
+            sudo_group = grp.getgrnam('sudo')
+            return username in sudo_group.gr_mem
+
+        except KeyError:
+            # Grupo sudo não existe
+            logger.warning("Group 'sudo' not found on the system")
+            return False
+        except Exception as e:
+            logger.error(f"Error checking sudo privileges for {username}: {e}")
+            return False
+
+    def user_exists(self, username: str) -> bool:
+        """Verifica se um usuário RDP existe"""
+        try:
+            pwd.getpwnam(username)
+            # Verificar se está no grupo rdp-users
+            return True
+        except KeyError:
+            return False
+
+
+
+    def _check_user_enabled_from_shadow(self, username: str) -> bool:
+        """
+        Verifica se usuário está habilitado lendo /etc/shadow diretamente
+        Usa cache se não tiver permissões para verificar
+
+        Args:
+            username: Nome do usuário
+
+        Returns:
+            True se habilitado, False se bloqueado
+        """
+        try:
+            # Tentar usar getent shadow (pode funcionar em alguns sistemas)
+            result = run_command(
+                ['getent', 'shadow', username],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            if result.returncode == 0 and result.stdout:
+                # Formato: username:password:lastchg:min:max:warn:inactive:expire:reserved
+                # Se password começa com '!' ou '!!' está bloqueado
+                parts = result.stdout.strip().split(':')
+                if len(parts) >= 2:
+                    password_field = parts[1]
+                    # Bloqueado se começa com '!' ou '!!'
+                    is_locked = password_field.startswith('!')
+                    enabled = not is_locked
+
+                    # Atualizar cache com valor real
+                    UserManager._user_states_cache[username] = enabled
+                    return enabled
+
+            # Se não conseguiu verificar diretamente, usar cache
+            if username in UserManager._user_states_cache:
+                logger.debug(f"Usando cache para status de {username}: {UserManager._user_states_cache[username]}")
+                return UserManager._user_states_cache[username]
+
+            # Se não tem no cache, assumir habilitado
+            # (novos usuários são criados habilitados por padrão)
+            logger.debug(f"No cache entry for {username}; assuming enabled")
+            return True
+
+        except Exception as e:
+            logger.debug(f"Could not check the status of {username}: {e}")
+            # Tentar usar cache
+            if username in UserManager._user_states_cache:
+                return UserManager._user_states_cache[username]
+            return True  # Por padrão, assumir habilitado
+
+    def _detect_session_info(self, home_dir: str) -> tuple:
+        """
+        Detecta informações de sessão do usuário do arquivo .xsession
+
+        Returns:
+            tuple: (session_type, desktop_env_or_command, app_args)
+        """
+        try:
+            xsession_file = Path(home_dir) / '.xsession'
+            xinitrc_file = Path(home_dir) / '.xinitrc'
+
+            if not xsession_file.exists():
+                logger.warning(f".xsession file not found in {home_dir}")
+                return ('desktop', 'unknown', '')
+
+            # Ensure .xinitrc symlink exists for Arch Linux compatibility
+            if not xinitrc_file.exists():
+                try:
+                    os.symlink(str(xsession_file), str(xinitrc_file))
+                except Exception as exc:
+                    logger.debug(f"Could not auto-create .xinitrc symlink: {exc}")
+
+            # Ler arquivo .xsession
+            with open(xsession_file, 'r') as f:
+                content = f.read()
+
+            # Current installations use a stable Python dispatcher. Determine
+            # the visible session from its default profile instead of treating
+            # the wrapper as an unknown desktop command.
+            if 'rdpsm-session.py' in content:
+                profiles_file = Path(home_dir) / '.rdp_profiles.json'
+                if profiles_file.is_file():
+                    try:
+                        profiles = json.loads(profiles_file.read_text(encoding='utf-8'))
+                        if isinstance(profiles, dict):
+                            profiles = profiles.get('profiles', [])
+                        if isinstance(profiles, list) and profiles:
+                            profile = next(
+                                (item for item in profiles if item.get('is_default')),
+                                profiles[0],
+                            )
+                            profile_type = profile.get('profile_type', 'desktop')
+                            if profile_type == 'desktop':
+                                return ('desktop', profile.get('desktop_env', 'xfce'), '')
+                            return (
+                                profile_type,
+                                profile.get('app_command', 'unknown'),
+                                profile.get('app_args', ''),
+                            )
+                    except (OSError, ValueError, TypeError) as exc:
+                        logger.debug(f"Could not read profiles from {profiles_file}: {exc}")
+
+                # Profiles created by v0.6.0-v0.6.3 may be mode 0600 and
+                # unreadable by the desktop manager. Recover the Windows
+                # session type from its managed runtime markers without
+                # elevating just to populate the user list.
+                runtime_markers = (
+                    Path(home_dir) / '.windows_runtime.json',
+                    Path(home_dir) / '.launch_winege_app.sh',
+                )
+                winege_app_path = Path(home_dir) / '.winege_app_path'
+                if any(path.exists() for path in runtime_markers):
+                    if winege_app_path.exists():
+                        try:
+                            executable = winege_app_path.read_text(
+                                encoding='utf-8'
+                            ).strip()
+                        except OSError:
+                            executable = 'unknown'
+                    else:
+                        executable = 'unknown'
+                    return ('winege-remoteapp', executable or 'unknown', '')
+
+            # Detectar se é WineGE RemoteApp
+            if 'Mode: WineGE RemoteApp' in content or '.launch_winege_app.sh' in content:
+                # WineGE RemoteApp mode - ler o caminho do .exe
+                winege_app_path = Path(home_dir) / '.winege_app_path'
+                if winege_app_path.exists():
+                    with open(winege_app_path, 'r') as f:
+                        exe_path = f.read().strip()
+                        logger.debug(f"Detected WineGE RemoteApp: {exe_path}")
+                        return ('winege-remoteapp', exe_path, '')
+                return ('winege-remoteapp', 'unknown', '')
+
+            # Detectar se é RemoteApp ou Desktop (RemoteApp usa openbox)
+            if 'Mode: RemoteApp' in content or 'openbox' in content:
+                # RemoteApp mode - extrair comando do app
+                for line in content.split('\n'):
+                    line = line.strip()
+                    if line.startswith('exec ') and not any(wm in line for wm in ['openbox', 'metacity', 'dbus-launch', 'winege']):
+                        # Extrair comando e argumentos
+                        exec_cmd = line[5:].strip()  # Remove "exec "
+                        parts = exec_cmd.split(maxsplit=1)
+                        app_command = parts[0] if parts else ''
+                        app_args = parts[1] if len(parts) > 1 else ''
+                        logger.debug(f"Detected RemoteApp: {app_command} {app_args}")
+                        return ('remoteapp', app_command, app_args)
+                return ('remoteapp', 'unknown', '')
+            else:
+                # Desktop mode - detectar DE
+                de_commands = {
+                    'startxfce4': 'xfce',
+                    'gnome-session': 'gnome',
+                    'startplasma-x11': 'kde'
+                }
+
+                for command, de_id in de_commands.items():
+                    if command in content:
+                        logger.debug(f"Detected DE for {home_dir}: {de_id} (command: {command})")
+                        return ('desktop', de_id, '')
+
+                logger.warning(f"Unrecognized DE command in {xsession_file}")
+                return ('desktop', 'unknown', '')
+
+        except Exception as e:
+            logger.error(f"Error detecting session in {home_dir}: {e}")
+            return ('desktop', 'unknown', '')
+
+
+    def _detect_rdp_port(self, uid: int) -> int:
+        """Detecta a porta RDP baseada na configuração global"""
+        # Usar porta global da configuração (todos os usuários na mesma porta)
+        if self.app_config:
+            return self.app_config.get_default_rdp_port()
+        return 3389  # Fallback
+
+    def _build_rdp_user(self, user_info, enabled_override: Optional[bool] = None, personal_meta: Optional[Dict] = None) -> RDPUser:
+        is_personal = self._is_personal_home(user_info.pw_dir)
+        personal_mode = (personal_meta or {}).get('mode', 'xrdp') if is_personal else 'xrdp'
+
+        if personal_mode == 'live':
+            session_type = 'desktop'
+            desktop_env = (os.environ.get('XDG_CURRENT_DESKTOP') or 'live').split(':')[0].lower() or 'live'
+            app_command = ''
+            app_args = ''
+            rdp_port = int((personal_meta or {}).get('port', 3390))
+        else:
+            session_type, desktop_env_or_cmd, app_args = self._detect_session_info(user_info.pw_dir)
+            if session_type in ['remoteapp', 'winege-remoteapp']:
+                desktop_env = session_type
+                app_command = desktop_env_or_cmd
+            else:
+                desktop_env = desktop_env_or_cmd
+                app_command = ''
+                app_args = ''
+            rdp_port = self._detect_rdp_port(user_info.pw_uid)
+
+        if enabled_override is not None:
+            is_enabled = enabled_override
+        elif is_personal:
+            is_enabled = bool((personal_meta or {}).get('enabled', True))
+        else:
+            is_enabled = self._check_user_enabled_from_shadow(user_info.pw_name)
+
+        has_sudo = self.is_superuser(user_info.pw_name)
+        profiles = self.load_profiles_for_user(
+            home_dir=user_info.pw_dir,
+            default_session_type=session_type,
+            default_de=desktop_env,
+            default_cmd=app_command,
+            default_args=app_args
+        ) if personal_mode != 'live' else []
+
+        return RDPUser(
+            username=user_info.pw_name,
+            uid=user_info.pw_uid,
+            home_dir=user_info.pw_dir,
+            desktop_env=desktop_env,
+            rdp_port=rdp_port,
+            active=False,
+            enabled=is_enabled,
+            is_superuser=has_sudo,
+            session_type=session_type,
+            app_command=app_command,
+            app_args=app_args,
+            profiles=profiles,
+            is_personal=is_personal,
+            personal_mode=personal_mode,
+        )
+
+    def list_users(self) -> List[RDPUser]:
+        """Lista todos os usuários RDP"""
+        users = []
+        seen_usernames = set()
+        personal_map = self._load_personal_users()
+
+        try:
+            rdp_group = None
+            try:
+                rdp_group = grp.getgrnam(self.RDP_GID_NAME)
+            except KeyError:
+                rdp_group = None
+
+            if rdp_group is not None:
+                members = set(rdp_group.gr_mem)
+                for user_info in pwd.getpwall():
+                    if user_info.pw_name in members or user_info.pw_gid == rdp_group.gr_gid:
+                        meta = personal_map.get(user_info.pw_name)
+                        users.append(self._build_rdp_user(user_info, personal_meta=meta))
+                        seen_usernames.add(user_info.pw_name)
+
+            # Incluir usuários pessoais (modo live ou xrdp desabilitado)
+            for personal_username, meta in personal_map.items():
+                if personal_username in seen_usernames:
+                    continue
+                try:
+                    user_info = pwd.getpwnam(personal_username)
+                except KeyError:
+                    continue
+                enabled_val = meta.get('enabled', False) if meta.get('mode') == 'live' else False
+                users.append(self._build_rdp_user(user_info, enabled_override=enabled_val, personal_meta=meta))
+                seen_usernames.add(personal_username)
+
+        except Exception as e:
+            logger.error(f"Error listing users: {e}")
+
+        return users
+
+    def load_profiles_for_user(self, *args, **kwargs):
+        return ProfileRepository().load_profiles_for_user(*args, **kwargs)
+
+    def save_profiles_for_user(self, *args, **kwargs):
+        return ProfileRepository().save_profiles_for_user(*args, **kwargs)
+
+    def export_rdp_file(self, username: str, profile_id: str, output_path: str, server_host: str = 'localhost') -> bool:
+        """Gera um arquivo .rdp para uma fonte de conexão específica do usuário"""
+        try:
+            user = self.get_user(username)
+            if not user:
+                return False
+
+            profile = None
+            for p in user.profiles:
+                if p.profile_id == profile_id:
+                    profile = p
+                    break
+
+            if not profile:
+                logger.error(f"Perfil {profile_id} não encontrado para o usuário {username}")
+                return False
+
+            rdp_content = [
+                f"full address:s:{server_host}:{user.rdp_port}",
+                f"username:s:{username}",
+                "prompt for credentials:i:1",
+                "screen mode id:i:2",
+                "use multimon:i:1",
+                "session bpp:i:32",
+                "compression:i:1",
+            ]
+
+            if profile.profile_type in ['remoteapp', 'winege-remoteapp']:
+                rdp_content.extend([
+                    # xrdp RAIL is not treated as production-ready. The
+                    # alternate shell selects a profile while the client keeps
+                    # a normal full-screen single-application session.
+                    "remoteapplicationmode:i:0",
+                    f"alternate shell:s:{profile.profile_id}",
+                ])
+
+            with open(output_path, 'w') as f:
+                f.write("\r\n".join(rdp_content) + "\r\n")
+
+            logger.info(f"Arquivo RDP exportado com sucesso para {output_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Erro ao exportar arquivo .rdp: {e}")
+            return False
+
+    def get_user(self, username: str) -> Optional[RDPUser]:
+        """Obtém informações de um usuário específico"""
+        for user in self.list_users():
+            if user.username == username:
+                return user
+        return None
+
+    def _validate_username(self, username: str) -> bool:
+        """Valida nome de usuário"""
+        import re
+
+        # Lista de nomes de usuário reservados do sistema
+        RESERVED_USERNAMES = {
+            'root', 'admin', 'administrator', 'daemon', 'bin', 'sys', 'sync',
+            'games', 'man', 'lp', 'mail', 'news', 'uucp', 'proxy', 'www-data',
+            'backup', 'list', 'irc', 'gnats', 'nobody', 'systemd-network',
+            'systemd-resolve', 'messagebus', 'systemd-timesync', 'syslog',
+            'avahi-autoipd', 'usbmux', 'dnsmasq', 'rtkit', 'cups-pk-helper',
+            'speech-dispatcher', 'avahi', 'pulse', 'saned', 'colord', 'hplip',
+            'geoclue', 'gnome-initial-setup', 'gdm', 'postgres', 'mysql',
+            'ftp', 'ssh', 'sshd'
+        }
+
+        # Verificar se é nome reservado
+        if username.lower() in RESERVED_USERNAMES:
+            logger.error(f"Username '{username}' is reserved by the system")
+            return False
+
+        # Nome deve começar com letra, conter apenas letras, números, - e _
+        # Comprimento entre 3 e 32 caracteres
+        pattern = r'^[a-z][a-z0-9_-]{2,31}$'
+        return bool(re.match(pattern, username))
+
+    def change_password(self, username: str, new_password: str) -> bool:
+        """
+        Altera senha de um usuário RDP
+
+        Args:
+            username: Nome do usuário
+            new_password: Nova senha
+
+        Returns:
+            True se sucesso, False se falha
+        """
+        try:
+            if self._is_personal_user(username):
+                personal_meta = self._load_personal_users().get(username, {})
+                if personal_meta.get('mode') == 'live':
+                    from rdp_session_manager.infrastructure import live_desktop
+                    port = int(personal_meta.get('port', 3390))
+                    backend = personal_meta.get('backend') or None
+                    return live_desktop.update_live_credentials(
+                        username, new_password, port=port, backend=backend
+                    )
+                return False
+
+            if not self.user_exists(username):
+                logger.error(f"User does not exist: {username}")
+                return False
+
+            logger.info(f"Changing password for user: {username}")
+
+            # Usar script helper para alterar senha
+            script_dir = helper_dir()
+            password_script = script_dir / "set-user-password.sh"
+
+            # Obter comando de elevação apropriado (pkexec ou sudo)
+            _, priv_cmd = get_privilege_command()
+
+            # Pass credentials only through stdin; never expose them in argv.
+            passwd_proc = run_command(
+                priv_cmd + [str(password_script)],
+                input=f'{username}:{new_password}\n',
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if passwd_proc.returncode != 0:
+                error_msg = passwd_proc.stderr.strip()
+                logger.error(f"Failed to change password: {error_msg}")
+                return False
+
+            logger.info(f"OK Password for {username} changed successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error changing password for {username}: {e}")
+            return False
+
+    def rename_user(self, old_username: str, new_username: str) -> bool:
+        """
+        Renomeia um usuário RDP
+
+        Args:
+            old_username: Nome atual do usuário
+            new_username: Novo nome do usuário
+
+        Returns:
+            True se sucesso, False se falha
+        """
+        try:
+            if not self.user_exists(old_username):
+                logger.error(f"User does not exist: {old_username}")
+                return False
+
+            if self.user_exists(new_username):
+                logger.error(f"User already exists: {new_username}")
+                return False
+
+            # Validar novo nome
+            if not self._validate_username(new_username):
+                logger.error(f"Invalid username: {new_username}")
+                return False
+
+            logger.info(f"Renaming user: {old_username} -> {new_username}")
+
+            # Usar script helper para renomear usuário
+            script_dir = helper_dir()
+            rename_script = script_dir / "rename-user.sh"
+
+            # Obter comando de elevação apropriado (pkexec ou sudo)
+            _, priv_cmd = get_privilege_command()
+
+            cmd = priv_cmd + [str(rename_script), old_username, new_username]
+
+            result = run_command(cmd, capture_output=True, text=True, timeout=30)
+
+            if result.returncode != 0:
+                logger.error(f"Failed to rename user: {result.stderr}")
+                return False
+
+            logger.info(f"OK User renamed: {old_username} -> {new_username}")
+
+            # Atualizar cache de estados
+            if old_username in UserManager._user_states_cache:
+                UserManager._user_states_cache[new_username] = UserManager._user_states_cache.pop(old_username)
+                self._save_states_cache()
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error renaming user {old_username}: {e}")
+            return False
+
+    def change_user_fullname(self, username: str, new_fullname: str) -> bool:
+        """
+        Altera o nome completo (GECOS) de um usuário RDP
+
+        Args:
+            username: Nome do usuário
+            new_fullname: Novo nome completo
+
+        Returns:
+            True se sucesso, False se falha
+        """
+        try:
+            if not self.user_exists(username):
+                logger.error(f"User does not exist: {username}")
+                return False
+
+            logger.info(f"Changing full name for {username} to: {new_fullname}")
+
+            # Usar script helper para alterar GECOS
+            script_dir = helper_dir()
+            chfn_script = script_dir / "change-user-fullname.sh"
+
+            # Obter comando de elevação apropriado (pkexec ou sudo)
+            _, priv_cmd = get_privilege_command()
+
+            cmd = priv_cmd + [str(chfn_script), username, new_fullname]
+
+            result = run_command(cmd, capture_output=True, text=True, timeout=30)
+
+            if result.returncode != 0:
+                logger.error(f"Failed to change full name: {result.stderr}")
+                return False
+
+            logger.info(f"OK Full name for {username} changed successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error changing full name for {username}: {e}")
+            return False
+
+    @staticmethod
+    def _is_listable_windows_executable(executable: Path) -> bool:
+        """Hide Wine/system helpers without hiding real apps such as Notepad++."""
+        lowered = str(executable).lower().replace('\\', '/')
+        name = executable.name.lower()
+        ignored_names = (
+            'unins',
+            'uninst',
+            'gup.exe',
+            'update.exe',
+            'updater.exe',
+            'crashreport',
+            'vc_redist',
+            'dxsetup',
+        )
+        ignored_paths = (
+            '/windows/',
+            '/internet explorer/',
+            '/windows media player/',
+            '/windows nt/',
+            '/windows mail/',
+            '/windows photo',
+            '/wordpad/',
+        )
+        return not (
+            any(token in name for token in ignored_names)
+            or any(token in lowered for token in ignored_paths)
+        )
+
+    def list_user_executables(self, username: str) -> list:
+        """
+        Lista todos os executáveis disponíveis para um usuário WineGE
+
+        Args:
+            username: Nome do usuário
+
+        Returns:
+            Lista de caminhos de executáveis disponíveis
+        """
+        try:
+            if not self.user_exists(username):
+                return []
+
+            user_home = self.rdp_users_home / username
+            executables = []
+
+            # Buscar em WindowsApps (portáteis)
+            windows_apps = user_home / "WindowsApps"
+            if windows_apps.exists():
+                for exe in windows_apps.glob("*.exe"):
+                    executables.append(("WindowsApps", str(exe)))
+
+            # Buscar instalados no Wine
+            wine_prefix = user_home / ".wine" / "drive_c"
+            if wine_prefix.exists():
+                program_files = [
+                    wine_prefix / "Program Files",
+                    wine_prefix / "Program Files (x86)"
+                ]
+
+                for pf in program_files:
+                    if pf.exists():
+                        for exe in pf.rglob("*.exe"):
+                            if self._is_listable_windows_executable(exe):
+                                executables.append(("Wine", str(exe)))
+
+            return executables
+
+        except Exception as e:
+            logger.error(f"Error listing executables for {username}: {e}")
+            return []
+
+    def update_winege_executable(self, username: str, new_exe_path: str) -> bool:
+        """
+        Atualiza o executável WineGE de um usuário existente
+
+        Args:
+            username: Nome do usuário
+            new_exe_path: Caminho do novo executável .exe
+
+        Returns:
+            True se sucesso, False se falha
+        """
+        try:
+            if not self.user_exists(username):
+                logger.error(f"User does not exist: {username}")
+                return False
+
+            logger.info(f"Updating WineGE executable for {username} to: {new_exe_path}")
+
+            # Usar script helper para atualizar .exe
+            script_dir = helper_dir()
+            update_script = script_dir / "update-winege-exe.sh"
+
+            # Obter comando de elevação apropriado (pkexec ou sudo)
+            _, priv_cmd = get_privilege_command()
+
+            cmd = priv_cmd + [str(update_script), username, new_exe_path]
+
+            result = run_command(cmd, capture_output=True, text=True, timeout=30)
+
+            if result.returncode != 0:
+                logger.error(f"Failed to update executable: {result.stderr}")
+                return False
+
+            logger.info(f"OK WineGE executable for {username} updated successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error updating executable for {username}: {e}")
+            return False
+
+    def change_user_session_type(self, username: str, session_type: str,
+                                 session_command: str = '', app_args: str = '') -> bool:
+        """
+        Altera o tipo de sessão de um usuário RDP (desktop <-> remoteapp <-> winege-remoteapp)
+
+        Args:
+            username: Nome do usuário
+            session_type: Novo tipo ('desktop', 'remoteapp', ou 'winege-remoteapp')
+            session_command: Comando DE (desktop), app (remoteapp), ou .exe path (winege-remoteapp)
+            app_args: Argumentos do app (apenas remoteapp/winege-remoteapp)
+
+        Returns:
+            True se sucesso, False se falha
+        """
+        try:
+            if not self.user_exists(username):
+                logger.error(f"User does not exist: {username}")
+                return False
+
+            if session_type not in ['desktop', 'remoteapp', 'winege-remoteapp']:
+                logger.error(f"Invalid session type: {session_type}")
+                return False
+
+            logger.info(f"Changing session type for {username} to: {session_type}")
+
+            # Verificar se usuário tem processos ativos
+            active_pids = self.get_user_processes(username)
+            if active_pids:
+                logger.info(f"User {username} has {len(active_pids)} active processes—they will be terminated")
+
+            # Usar script helper para alterar .xsession
+            script_dir = helper_dir()
+            change_script = script_dir / "change-session-type.sh"
+
+            # Obter comando de elevação apropriado (pkexec ou sudo)
+            _, priv_cmd = get_privilege_command()
+
+            cmd = priv_cmd + [str(change_script), username, session_type, session_command, app_args]
+
+            result = run_command(cmd, capture_output=True, text=True, timeout=30)
+
+            if result.returncode != 0:
+                logger.error(f"Failed to change session type: {result.stderr}")
+                return False
+
+            user = self.get_user(username)
+            if user:
+                profile = user.default_profile
+                profile.profile_type = session_type
+                if session_type == 'desktop':
+                    profile.desktop_env = normalize_desktop_id(session_command)
+                    profile.app_command = ''
+                    profile.app_args = ''
+                else:
+                    profile.app_command = session_command
+                    profile.app_args = app_args
+                profile.command_argv = ConnectionProfile._legacy_argv(
+                    profile.app_command, profile.app_args
+                )
+                profile.runtime = 'umu' if session_type == 'winege-remoteapp' else 'native'
+                profile.resource_profile = (
+                    'windows-standard' if session_type == 'winege-remoteapp' else 'linux-light'
+                )
+                if not self.save_profiles_for_user(username, user.profiles):
+                    logger.error("Session changed but profile schema update failed")
+                    return False
+
+            logger.info(f"OK Session type for {username} changed to {session_type}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error changing session type for {username}: {e}")
+            return False

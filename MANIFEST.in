@@ -1,0 +1,7 @@
+include requirements*.txt README.md LICENSE
+recursive-include data *.ui *.json *.xml *.policy *.in *.logrotate *.png
+recursive-include helpers *.py *.sh
+recursive-include imgs *.png
+recursive-include installer *.py *.sh *.txt *.md
+recursive-include tests *.py *.sh *.c *.md
+recursive-include docs *.md *.json

@@ -12,10 +12,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from cli import CLI
-from core.health import HealthCheck, HealthReport, HealthService
+from rdp_session_manager.presentation.cli.commands import CLI
+from rdp_session_manager.infrastructure.health import HealthCheck, HealthReport, HealthService
 
 
 class FakeConfig:
@@ -199,7 +199,7 @@ class HealthServiceTest(unittest.TestCase):
                 **original(),
                 "settings": {"tls_certificate": certificate.name},
             }
-            with patch("core.health.os.access", return_value=False):
+            with patch("rdp_session_manager.infrastructure.health.os.access", return_value=False):
                 report = self.service(server=server).collect()
         check = next(item for item in report.checks if item.check_id == "host.tls")
         self.assertEqual(check.status, "unknown")

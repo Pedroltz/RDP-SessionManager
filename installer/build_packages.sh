@@ -6,15 +6,17 @@
 set -e
 
 APP_NAME="rdp-session-manager"
-APP_VERSION="$(sed -n 's/^__version__ = \"\(.*\)\"/\1/p' src/version.py)"
-[ -n "${APP_VERSION}" ] || { echo "ERROR: could not determine application version" >&2; exit 1; }
 APP_DESCRIPTION="RDP Session Manager with a GTK4 Interface"
 APP_MAINTAINER="Your Name <your.email@example.com>"
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUILD_DIR="${PROJECT_DIR}/build_temp"
-RELEASE_DIR="${PROJECT_DIR}/release"
+BUILD_DIR="$(mktemp -d -t rdpsm-package.XXXXXX)"
+trap 'rm -rf -- "$BUILD_DIR"' EXIT
+RELEASE_DIR="${RDPSM_RELEASE_DIR:-${PROJECT_DIR}/release}"
 cd "${PROJECT_DIR}"
+APP_VERSION="$(sed -n 's/^__version__ = \"\(.*\)\"/\1/p' src/rdp_session_manager/version.py)"
+[ -n "${APP_VERSION}" ] || { echo "ERROR: could not determine application version" >&2; exit 1; }
+
 
 # Detect distribution
 detect_distro() {
@@ -42,12 +44,12 @@ if ! command -v fpm &> /dev/null; then
         arch|manjaro|endeavouros|cachyos)
             echo "Install with:"
             echo "  sudo pacman -S ruby rubygems"
-            echo "  sudo gem install fpm"
+            echo "  sudo gem install fpm erb"
             ;;
         debian|ubuntu|linuxmint|pop)
             echo "Install with:"
             echo "  sudo apt-get install -y ruby ruby-dev rubygems build-essential"
-            echo "  sudo gem install fpm"
+            echo "  sudo gem install fpm erb"
             ;;
         *)
             echo "Install fpm from: https://github.com/jordansissel/fpm"
@@ -62,6 +64,9 @@ mkdir -p "${BUILD_DIR}/usr/bin"
 mkdir -p "${BUILD_DIR}/usr/share/${APP_NAME}"
 mkdir -p "${BUILD_DIR}/usr/share/applications"
 mkdir -p "${BUILD_DIR}/usr/share/icons/hicolor/scalable/apps"
+mkdir -p "${BUILD_DIR}/usr/share/icons/hicolor/512x512/apps"
+mkdir -p "${BUILD_DIR}/usr/share/icons/hicolor/256x256/apps"
+mkdir -p "${BUILD_DIR}/usr/share/pixmaps"
 mkdir -p "${BUILD_DIR}/usr/share/polkit-1/actions"
 mkdir -p "${BUILD_DIR}/usr/share/glib-2.0/schemas"
 mkdir -p "${BUILD_DIR}/usr/share/metainfo"
@@ -102,7 +107,7 @@ cat > "${BUILD_DIR}/usr/bin/${APP_NAME}" << 'EOF'
 #!/usr/bin/env python3
 import sys
 sys.path.insert(0, '/usr/share/rdp-session-manager/src')
-from main import main
+from rdp_session_manager.presentation.gtk.main import main
 if __name__ == '__main__':
     sys.exit(main())
 EOF
@@ -112,7 +117,7 @@ cat > "${BUILD_DIR}/usr/bin/rdpsm" << 'EOF'
 #!/usr/bin/env python3
 import sys
 sys.path.insert(0, '/usr/share/rdp-session-manager/src')
-from cli import main
+from rdp_session_manager.presentation.cli.commands import main
 if __name__ == '__main__':
     main()
 EOF
@@ -124,8 +129,12 @@ chmod +x "${BUILD_DIR}/usr/bin/rdpsm"
     "${BUILD_DIR}/usr/share/applications/com.rdp.SessionManager.desktop"
 
 # Copy icon
-[ -f "imgs/RDPSM.png" ] && \
+if [ -f "imgs/RDPSM.png" ]; then
     cp imgs/RDPSM.png "${BUILD_DIR}/usr/share/icons/hicolor/scalable/apps/com.rdp.SessionManager.png"
+    cp imgs/RDPSM.png "${BUILD_DIR}/usr/share/icons/hicolor/512x512/apps/com.rdp.SessionManager.png"
+    cp imgs/RDPSM.png "${BUILD_DIR}/usr/share/icons/hicolor/256x256/apps/com.rdp.SessionManager.png"
+    cp imgs/RDPSM.png "${BUILD_DIR}/usr/share/pixmaps/com.rdp.SessionManager.png"
+fi
 
 # Copy other files
 [ -f "data/com.rdp.SessionManager.policy" ] && \
@@ -160,7 +169,7 @@ POSTREMOVE
 chmod +x "${BUILD_DIR}/DEBIAN_postrm"
 
 # Build package(s)
-case "all" in
+case "${RDPSM_PACKAGE_TARGET:-all}" in
     arch|manjaro|endeavouros|cachyos)
         echo "→ Building Arch package (.pkg.tar.zst)..."
         fpm -s dir -t pacman \
@@ -171,7 +180,7 @@ case "all" in
             --maintainer "${APP_MAINTAINER}" \
             --license "GPL-3.0" \
             --category "admin" \
-            --depends "python>=3.8" \
+            --depends "python>=3.9" \
             --depends "python-gobject" \
             --depends "python-cairo" \
             --depends "gtk4" \
@@ -197,7 +206,7 @@ case "all" in
             --maintainer "${APP_MAINTAINER}" \
             --license "GPL-3.0" \
             --category "admin" \
-            --depends "python3 >= 3.8" \
+            --depends "python3 >= 3.9" \
             --depends "python3-gi" \
             --depends "python3-gi-cairo" \
             --depends "gir1.2-gtk-4.0" \
@@ -227,7 +236,7 @@ case "all" in
             --maintainer "${APP_MAINTAINER}" \
             --license "GPL-3.0" \
             --category "admin" \
-            --depends "python3 >= 3.8" \
+            --depends "python3 >= 3.9" \
             --depends "python3-gi" \
             --depends "python3-gi-cairo" \
             --depends "gir1.2-gtk-4.0" \
@@ -251,7 +260,7 @@ case "all" in
             --maintainer "${APP_MAINTAINER}" \
             --license "GPL-3.0" \
             --category "admin" \
-            --depends "python>=3.8" \
+            --depends "python>=3.9" \
             --depends "python-gobject" \
             --depends "python-cairo" \
             --depends "gtk4" \

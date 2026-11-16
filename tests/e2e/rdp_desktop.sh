@@ -98,7 +98,7 @@ if ! command -v rdpsm >/dev/null 2>&1; then
     cat > /tmp/rdpsm <<WRAPPEREOF
 #!/bin/bash
 export PYTHONPATH="${SCRIPT_DIR}/src:\${PYTHONPATH}"
-exec python3 "${SCRIPT_DIR}/src/cli.py" "\$@"
+exec python3 "${SCRIPT_DIR}/src/rdp_session_manager/presentation/cli/__main__.py" "\$@"
 WRAPPEREOF
     chmod +x /tmp/rdpsm
     export PATH="/tmp:${PATH}"

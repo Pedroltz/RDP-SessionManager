@@ -13,9 +13,9 @@ from datetime import datetime, timedelta
 from unittest.mock import patch, Mock
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from utils.backup import BackupManager
+from rdp_session_manager.infrastructure.backup import BackupManager
 
 
 class TestBackupManager(unittest.TestCase):

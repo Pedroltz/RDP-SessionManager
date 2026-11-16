@@ -666,7 +666,7 @@ class Installer:
                 "gir1.2-gtk-4.0", "gir1.2-adw-1", "libadwaita-1-0", "polkitd",
             ]
             if not self.args.without_xrdp:
-                packages += ["xrdp", "xorgxrdp", "xorg", "x11-xserver-utils", "xauth", "openbox", "dbus-x11", "zenity", "nftables"]
+                packages += ["xrdp", "xorgxrdp", "xorg", "x11-utils", "x11-xserver-utils", "xauth", "openbox", "dbus-x11", "zenity", "nftables"]
             if self.args.with_wine:
                 packages += [
                     "wine", "wine64", "wine32", "winetricks", "cabextract",
@@ -675,7 +675,7 @@ class Installer:
             return packages
         packages = ["python", "python-gobject", "python-cairo", "python-psutil", "gtk4", "libadwaita", "polkit"]
         if not self.args.without_xrdp:
-            packages += ["xorg-server", "xorg-xinit", "xorg-xrandr", "xorg-xauth", "openbox", "dbus", "zenity", "nftables"]
+            packages += ["xorg-server", "xorg-xinit", "xorg-xrandr", "xorg-xauth", "xorg-xprop", "openbox", "dbus", "zenity", "nftables"]
         if self.args.with_wine:
             packages += [
                 "wine", "wine-mono", "wine-gecko", "winetricks", "umu-launcher",

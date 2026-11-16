@@ -1,0 +1,25 @@
+{
+  "cli_help": {
+    "median_ms": 135.787,
+    "cpu_ms": 0.596,
+    "subprocesses": 1
+  },
+  "users": {
+    "median_ms": 13.976,
+    "cpu_ms": 3.223,
+    "subprocesses": 6
+  },
+  "sessions": {
+    "median_ms": 3.0,
+    "cpu_ms": 1.089,
+    "subprocesses": 1
+  },
+  "system_stats": {
+    "median_ms": 2.836,
+    "cpu_ms": 1.215,
+    "subprocesses": 1
+  },
+  "max_rss_kib": 31828,
+  "managed_users": 3,
+  "note": "Host read-only probes; CPU is collector CPU, RSS is collector peak. GTK activation and RDP load measured separately."
+}

@@ -9,11 +9,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from core.server_config import ServerConfig, ServerSettings
-from core.server_manager import ServerManager
-from core.user_manager import ConnectionProfile, UserManager
+from rdp_session_manager.infrastructure.server_config import ServerConfig, ServerSettings
+from rdp_session_manager.infrastructure.server_config import RESOURCE_PROFILES
+from rdp_session_manager.infrastructure.server_manager import ServerManager
+from rdp_session_manager.infrastructure.user_manager import ConnectionProfile, UserManager
 
 
 def load_session_helper():
@@ -35,6 +36,18 @@ def load_apply_helper():
 
 
 class ServerConfigTest(unittest.TestCase):
+    def test_linux_task_budget_matches_provisioner_and_preserves_overrides(self):
+        path = Path(__file__).parent.parent / "helpers" / "apply-user-resource.py"
+        spec = importlib.util.spec_from_file_location("apply_user_resource", path)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        self.assertEqual(RESOURCE_PROFILES["linux-light"]["tasks_max"], 1024)
+        self.assertEqual(RESOURCE_PROFILES, helper.DEFAULTS)
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "server.ini"
+            config.write_text("[resource:linux-light]\ntasks_max = 384\n")
+            self.assertEqual(ServerConfig(config).load_resource_profiles()["linux-light"]["tasks_max"], 384)
+
     def test_defaults_are_production_bounded(self):
         settings = ServerSettings()
         self.assertEqual(settings.max_sessions, 25)
@@ -60,7 +73,7 @@ class ServerConfigTest(unittest.TestCase):
         self.assertIn("max_bpp=24", result)
         self.assertIn("[Xorg]\nname=Xorg", result)
 
-    @patch("core.server_manager.psutil.virtual_memory")
+    @patch("rdp_session_manager.infrastructure.server_manager.psutil.virtual_memory")
     def test_capacity_preserves_host_reserve(self, memory):
         memory.return_value = Mock(total=8 * 1024**3)
         manager = ServerManager(config_path="/nonexistent")
@@ -123,8 +136,8 @@ class SessionDispatcherTest(unittest.TestCase):
                 "unknown",
             )
 
-    @patch("core.server_manager.subprocess.Popen")
-    @patch("core.server_manager.subprocess.run")
+    @patch("rdp_session_manager.infrastructure.server_manager.subprocess.Popen")
+    @patch("rdp_session_manager.infrastructure.server_manager.subprocess.run")
     def test_select_profile_invokes_chooser_for_multiple_profiles(self, mock_run, mock_popen):
         profiles = [
             {"profile_id": "p1", "name": "Desktop", "profile_type": "desktop", "is_default": True},

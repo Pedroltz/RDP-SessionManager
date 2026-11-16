@@ -9,10 +9,10 @@ from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from cli import CLI
-from core.remediation import RemediationService
+from rdp_session_manager.presentation.cli.commands import CLI
+from rdp_session_manager.application.remediation import RemediationService
 
 
 class DiagnosisManager:

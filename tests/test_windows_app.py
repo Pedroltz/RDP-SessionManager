@@ -7,9 +7,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from core.windows_app import (  # noqa: E402
+from rdp_session_manager.infrastructure.windows_app import (  # noqa: E402
     InstallRecipe,
     RecipeCatalog,
     WindowsAppError,
@@ -17,7 +17,7 @@ from core.windows_app import (  # noqa: E402
     safe_app_id,
     sha256_file,
 )
-from core.user_manager import ConnectionProfile  # noqa: E402
+from rdp_session_manager.infrastructure.user_manager import ConnectionProfile  # noqa: E402
 
 
 class WindowsAppRecipeTest(unittest.TestCase):

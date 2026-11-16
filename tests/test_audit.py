@@ -11,9 +11,9 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / 'src'))
 
-from core.audit import AuditStore
+from rdp_session_manager.infrastructure.audit import AuditStore
 
 
 def load_helper(name, filename):
@@ -78,7 +78,7 @@ class AuditStoreTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             store.list_events(since="not-a-date")
 
-    @patch("core.audit.get_privilege_command", return_value=("sudo", ["sudo"]))
+    @patch("rdp_session_manager.infrastructure.audit.get_privilege_command", return_value=("sudo", ["sudo"]))
     @patch("pathlib.Path.open", side_effect=PermissionError)
     def test_permission_denied_uses_privileged_read_helper(self, _open, _privilege):
         runner = Mock(return_value=Mock(

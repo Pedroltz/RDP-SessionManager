@@ -6,9 +6,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from ui.main_window import MainWindow
+from rdp_session_manager.presentation.gtk.main_window import MainWindow
+from rdp_session_manager.application.tasks import BackgroundTasks
 
 
 class ImmediateThread:
@@ -27,10 +28,11 @@ class HealthRefreshControllerTest(unittest.TestCase):
         window.health_service.collect.return_value = Mock()
         return window
 
-    @patch("ui.main_window.GLib.idle_add")
+    @patch("rdp_session_manager.presentation.gtk.main_window.GLib.idle_add")
     @patch("threading.Thread", ImmediateThread)
     def test_idle_refresh_is_one_shot(self, idle_add):
         window = self.window_stub()
+        window._tasks = BackgroundTasks(idle_add, thread_factory=ImmediateThread)
         result = MainWindow.refresh_health(window)
         self.assertFalse(result)
         window.health_spinner.start.assert_called_once()

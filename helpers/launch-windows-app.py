@@ -11,11 +11,12 @@ from pathlib import Path
 for candidate in (
     Path("/usr/share/rdp-session-manager/src"),
     Path(__file__).resolve().parents[1] / "src",
+    Path(__file__).resolve().parent / "rdpsm-runtime",
 ):
     if candidate.is_dir():
         sys.path.insert(0, str(candidate))
 
-from core.windows_app import WindowsAppError, WindowsAppManager  # noqa: E402
+from rdp_session_manager.infrastructure.windows_app import WindowsAppError, WindowsAppManager  # noqa: E402
 
 
 def window_ids():
