@@ -6,8 +6,8 @@ interface Props { content: SiteContent }
 const { content } = Astro.props;
 const isPt = content.locale === "pt";
 const title = isPt
-  ? "RDP Session Manager — aplicações Windows no Linux via RDP"
-  : "RDP Session Manager — Windows applications on Linux over RDP";
+  ? "RDP Session Manager — administração RDP para Linux"
+  : "RDP Session Manager — RDP administration for Linux";
 const description = content.hero.body;
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const canonical = new URL(isPt ? `${base}/` : `${base}/en/`, Astro.site);
@@ -19,8 +19,8 @@ const structuredData = {
   operatingSystem: "Linux",
   description,
   license: "https://www.gnu.org/licenses/gpl-3.0.html",
-  downloadUrl: "https://github.com/Pedroltz/rdp-session-manager/releases/latest",
-  codeRepository: "https://github.com/Pedroltz/rdp-session-manager"
+  downloadUrl: "https://github.com/Pedroltz/RDP-SessionManager/releases/latest",
+  codeRepository: "https://github.com/Pedroltz/RDP-SessionManager"
 };
 ---
 
@@ -29,14 +29,15 @@ const structuredData = {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#09090b" />
+    <meta name="theme-color" content="#101014" />
     <meta name="description" content={description} />
     <meta name="generator" content={Astro.generator} />
+    {import.meta.env.PUBLIC_DEPLOYMENT_SHA && <meta name="deployment-revision" content={import.meta.env.PUBLIC_DEPLOYMENT_SHA} />}
     <link rel="canonical" href={canonical} />
     <link rel="alternate" hreflang="pt-BR" href={new URL(`${base}/`, Astro.site)} />
     <link rel="alternate" hreflang="en" href={new URL(`${base}/en/`, Astro.site)} />
     <link rel="alternate" hreflang="x-default" href={new URL(`${base}/`, Astro.site)} />
-    <link rel="icon" type="image/png" href={`${base}/monitor.png`} />
+    <link rel="icon" type="image/svg+xml" href={`${base}/favicon.svg`} />
     <meta property="og:type" content="website" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />

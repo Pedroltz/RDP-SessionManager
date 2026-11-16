@@ -1,0 +1,114 @@
+---
+import type { SiteContent } from "../data/content";
+interface Props { content: SiteContent }
+const { content: c } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const userHeader = `${"Username".padEnd(20)} ${"UID".padEnd(8)} ${"Desktop".padEnd(10)} ${"Port".padEnd(8)} Status`;
+const userRows = [
+  ["design-team", "2001", "GNOME", "3389"],
+  ["libreoffice", "2002", "XFCE", "3389"],
+  ["remote-desktop", "2003", "XFCE", "3389"]
+].map((fields) => `${fields[0].padEnd(20)} ${fields[1].padEnd(8)} ${fields[2].padEnd(10)} ${fields[3].padEnd(8)} `);
+const sessionHeader = `${"Username".padEnd(20)} ${"IP Address".padEnd(20)} Port`;
+const sessionRow = `${"design-team".padEnd(20)} ${"192.0.2.10".padEnd(20)} 3389`;
+---
+
+<div class="product-preview" data-preview>
+  <div class="preview-controls">
+    <span class="preview-label"><span class="preview-dot" aria-hidden="true"></span>{c.preview.label}</span>
+    <div class="preview-tabs" data-preview-tabs aria-label={c.preview.choose} hidden>
+      <button type="button" id="preview-tab-desktop" data-preview-tab="desktop">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="3" width="16" height="11" rx="2"/><path d="M6 18h8m-4-4v4"/></svg>
+        Desktop
+      </button>
+      <button type="button" id="preview-tab-terminal" data-preview-tab="terminal">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 5 5 5-5 5m8 0h5"/></svg>
+        Terminal
+      </button>
+    </div>
+  </div>
+
+  <section class="preview-panel" id="preview-desktop" data-preview-panel="desktop" aria-label="Desktop">
+    <div class="preview-window desktop-window">
+      <div class="window-bar"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>RDP Session Manager</span><span class="window-meta">GTK 4 / Linux</span></div>
+      <div class="desktop-canvas"><img src={`${base}/app-preview.webp`} width="1040" height="700" alt={c.preview.alt} fetchpriority="high" decoding="async" /></div>
+    </div>
+    <p class="preview-caption"><span>{c.preview.caption}</span><span class="preview-caption-detail">{c.preview.desktopDetail}</span></p>
+  </section>
+
+  <section class="preview-panel" id="preview-terminal" data-preview-panel="terminal" aria-label="Terminal">
+    <div class="preview-window terminal-window">
+      <div class="window-bar"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>admin@linux <span class="terminal-path">~/rdpsm</span></span><span class="window-meta">bash</span></div>
+      <div class="terminal-content">
+        <p class="terminal-comment"># {c.preview.terminalIntro}</p>
+        <pre tabindex="0" aria-label={c.preview.terminalOutput}><code><span class="terminal-prompt">❯ </span><span class="terminal-command">rdpsm</span> user list
+
+<span class="terminal-heading">RDP Users (3 total)</span>
+{"=".repeat("RDP Users (3 total)".length)}
+
+<span class="terminal-muted">{userHeader}</span>
+<span class="terminal-rule">{"-".repeat(70)}</span>
+{userRows[0]}<span class="terminal-success">Enabled</span>
+{userRows[1]}<span class="terminal-success">Enabled</span>
+{userRows[2]}<span class="terminal-success">Enabled</span>
+<span class="terminal-prompt">❯ </span><span class="terminal-command">rdpsm</span> session list
+
+<span class="terminal-heading">Active Sessions (1 total)</span>
+{"=".repeat("Active Sessions (1 total)".length)}
+
+<span class="terminal-muted">{sessionHeader}</span>
+<span class="terminal-rule">{"-".repeat(50)}</span>
+{sessionRow}
+
+<span class="terminal-prompt">❯ </span><span class="terminal-cursor" aria-hidden="true">▌</span></code></pre>
+        <p class="terminal-scroll-hint">{c.preview.terminalScroll}</p>
+      </div>
+      <div class="terminal-footer"><span><span class="preview-dot" aria-hidden="true"></span>{c.preview.terminalNote}</span><a href="https://github.com/Pedroltz/RDP-SessionManager/blob/master/docs/CLI.md">{c.preview.cliDocs} <span aria-hidden="true">↗</span></a></div>
+    </div>
+    <p class="preview-caption"><span>{c.preview.terminalCaption}</span><span class="preview-caption-detail">{c.preview.terminalDetail}</span></p>
+  </section>
+</div>
+
+<script>
+  const preview = document.querySelector<HTMLElement>("[data-preview]");
+  if (preview) {
+    const tablist = preview.querySelector<HTMLElement>("[data-preview-tabs]");
+    const tabs = Array.from(preview.querySelectorAll<HTMLButtonElement>("[data-preview-tab]"));
+    const panels = Array.from(preview.querySelectorAll<HTMLElement>("[data-preview-panel]"));
+    function activate(tab: HTMLButtonElement) {
+      for (const candidate of tabs) {
+        const active = candidate === tab;
+        candidate.setAttribute("aria-selected", String(active));
+        candidate.tabIndex = active ? 0 : -1;
+      }
+      for (const panel of panels) panel.hidden = panel.dataset.previewPanel !== tab.dataset.previewTab;
+    }
+    for (const tab of tabs) {
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", `preview-${tab.dataset.previewTab}`);
+      tab.addEventListener("click", () => activate(tab));
+      tab.addEventListener("keydown", (event) => {
+        const index = tabs.indexOf(tab);
+        let next: number;
+        if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+        else if (event.key === "ArrowLeft") next = (index - 1 + tabs.length) % tabs.length;
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = tabs.length - 1;
+        else return;
+        event.preventDefault();
+        activate(tabs[next]);
+        tabs[next].focus();
+      });
+    }
+    for (const panel of panels) {
+      panel.setAttribute("role", "tabpanel");
+      panel.setAttribute("aria-labelledby", `preview-tab-${panel.dataset.previewPanel}`);
+      panel.tabIndex = 0;
+    }
+    if (tablist && tabs.length) {
+      tablist.setAttribute("role", "tablist");
+      activate(tabs[0]);
+      tablist.hidden = false;
+    }
+  }
+</script>

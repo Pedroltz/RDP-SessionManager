@@ -1,8 +1,13 @@
 name: Deploy Website to GitHub Pages
 
 on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'website/**'
+      - '.github/workflows/deploy-pages.yml'
   push:
-    branches: [master, main]
+    branches: [master]
     paths:
       - 'website/**'
       - '.github/workflows/deploy-pages.yml'
@@ -10,17 +15,17 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
+# Serialize production runs; supersede outdated PR validation runs.
 concurrency:
-  group: 'pages'
-  cancel-in-progress: true
+  group: website-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     name: Build Astro Website
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,9 +33,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: 'npm'
-          cache-dependency-path: 'website/package-lock.json'
+          node-version-file: website/.nvmrc
+          cache: npm
+          cache-dependency-path: website/package-lock.json
 
       - name: Install dependencies
         working-directory: website
@@ -38,25 +43,60 @@ jobs:
 
       - name: Build site
         working-directory: website
+        env:
+          PUBLIC_DEPLOYMENT_SHA: ${{ github.sha }}
         run: npm run build
 
       - name: Verify build
         working-directory: website
-        run: node scripts/verify-build.mjs
+        run: npm run verify
 
-      - name: Upload Pages Artifact
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
         uses: actions/upload-pages-artifact@v3
         with:
           path: website/dist
 
   deploy:
     name: Deploy to GitHub Pages
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    needs: build
-    runs-on: ubuntu-24.04
     steps:
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  verify-deployment:
+    name: Verify published website
+    needs: deploy
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: website/.nvmrc
+
+      - name: Check published pages and assets
+        working-directory: website
+        env:
+          EXPECTED_REVISION: ${{ github.sha }}
+          PAGE_URL: ${{ needs.deploy.outputs.page_url }}
+        run: node scripts/verify-deployment.mjs "$PAGE_URL"

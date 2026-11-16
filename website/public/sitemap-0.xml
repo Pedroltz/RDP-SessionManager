@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
   <url>
-    <loc>https://pedroltz.github.io/rdp-session-manager/</loc>
-    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://pedroltz.github.io/rdp-session-manager/" />
-    <xhtml:link rel="alternate" hreflang="en" href="https://pedroltz.github.io/rdp-session-manager/en/" />
+    <loc>https://pedroltz.github.io/RDP-SessionManager/</loc>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://pedroltz.github.io/RDP-SessionManager/" />
+    <xhtml:link rel="alternate" hreflang="en" href="https://pedroltz.github.io/RDP-SessionManager/en/" />
   </url>
   <url>
-    <loc>https://pedroltz.github.io/rdp-session-manager/en/</loc>
-    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://pedroltz.github.io/rdp-session-manager/" />
-    <xhtml:link rel="alternate" hreflang="en" href="https://pedroltz.github.io/rdp-session-manager/en/" />
+    <loc>https://pedroltz.github.io/RDP-SessionManager/en/</loc>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://pedroltz.github.io/RDP-SessionManager/" />
+    <xhtml:link rel="alternate" hreflang="en" href="https://pedroltz.github.io/RDP-SessionManager/en/" />
   </url>
 </urlset>
