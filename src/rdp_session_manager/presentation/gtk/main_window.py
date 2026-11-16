@@ -1872,7 +1872,9 @@ Would you like to continue?"""
                 logger.info(f"Launching RemoteApp: {app_full_cmd}")
 
             # Adicionar domínio se fornecido
-            if domain:
+            if getattr(user, "personal_mode", None) == "live":
+                cmd.append("/d:")
+            elif domain:
                 cmd.append(f'/d:{domain}')
 
             if password:

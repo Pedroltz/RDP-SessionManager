@@ -1,4 +1,6 @@
 """Generic live-desktop RDP sharing backend detection and lifecycle management."""
+import ipaddress
+import json
 import logging
 import os
 import shutil
@@ -132,6 +134,35 @@ def _ensure_grd_tls() -> tuple[Path, Path]:
     return cert_path, key_path
 
 
+def ensure_live_firewall(port: int) -> bool:
+    """Allow RDP on the default LAN only when UFW is active."""
+    if not shutil.which("ufw"):
+        return True
+    _, privilege = get_privilege_command()
+    result = run_command(privilege + ["ufw", "status"], capture_output=True, text=True)
+    if result.returncode:
+        return False
+    if "Status: active" not in result.stdout:
+        return True
+    routes = run_command(["ip", "-j", "-4", "route"], capture_output=True, text=True)
+    if routes.returncode:
+        return False
+    entries = json.loads(routes.stdout)
+    devices = {r.get("dev") for r in entries if r.get("dst") == "default"}
+    networks = [r for r in entries if r.get("dev") in devices
+                and r.get("scope") == "link" and r.get("dst") != "default"]
+    if not networks:
+        return False
+    for route in networks:
+        network = str(ipaddress.ip_network(route["dst"], strict=False))
+        result = run_command(privilege + ["ufw", "allow", "in", "on", route["dev"],
+            "from", network, "to", "any", "port", str(port), "proto", "tcp"],
+            capture_output=True, text=True)
+        if result.returncode:
+            return False
+    return True
+
+
 def start_live_rdp(
     username: str,
     port: int = DEFAULT_LIVE_RDP_PORT,
@@ -142,21 +173,25 @@ def start_live_rdp(
     chosen = info["backend"]
 
     if chosen == "gnome-remote-desktop":
+        if not ensure_live_firewall(port):
+            raise RuntimeError("Could not configure UFW for the local network. Check administrator authorization and network connectivity.")
         cert_path, key_path = _ensure_grd_tls()
         commands = [
             ["grdctl", "rdp", "set-tls-cert", str(cert_path)],
             ["grdctl", "rdp", "set-tls-key", str(key_path)],
             ["grdctl", "rdp", "set-port", str(port)],
+            ["grdctl", "rdp", "disable-port-negotiation"],
         ]
         if password:
             commands.append(["grdctl", "rdp", "set-credentials", username, password])
         commands.append(["grdctl", "rdp", "disable-view-only"])
         commands.append(["grdctl", "rdp", "enable"])
+        commands.append(["systemctl", "--user", "daemon-reload"])
         commands.append(["systemctl", "--user", "restart", "gnome-remote-desktop.service"])
         for cmd in commands:
             res = run_command(cmd, capture_output=True, text=True, timeout=30)
             if res.returncode != 0:
-                logger.error("grdctl/systemctl command %s failed: %s", cmd, res.stderr)
+                logger.error("Live desktop command %s failed (exit %s)", cmd[:3], res.returncode)
                 return False
         return True
 

@@ -90,3 +90,19 @@ class TestLivePersonalRDPUserManager(unittest.TestCase):
             with patch.object(self.manager, "user_exists", return_value=True):
                 self.assertTrue(self.manager.delete_user("alice"))
             self.assertNotIn("alice", self.manager._load_personal_users())
+
+class TestLiveFirewall(unittest.TestCase):
+    @patch.object(live_desktop.shutil, 'which', return_value='/usr/bin/ufw')
+    @patch.object(live_desktop, 'get_privilege_command', return_value=(True, ['pkexec']))
+    @patch.object(live_desktop, 'run_command')
+    def test_limits_rule_to_default_network(self, run, privilege, which):
+        run.side_effect = [
+            SimpleNamespace(returncode=0, stdout='Status: active'),
+            SimpleNamespace(returncode=0, stdout=json.dumps([
+                {'dst': 'default', 'dev': 'wlan0'},
+                {'dst': '10.1.2.0/24', 'dev': 'wlan0', 'scope': 'link'},
+                {'dst': '172.17.0.0/16', 'dev': 'docker0', 'scope': 'link'}])),
+            SimpleNamespace(returncode=0)]
+        self.assertTrue(live_desktop.ensure_live_firewall(3390))
+        self.assertEqual(run.call_args.args[0], ['pkexec', 'ufw', 'allow', 'in', 'on',
+            'wlan0', 'from', '10.1.2.0/24', 'to', 'any', 'port', '3390', 'proto', 'tcp'])
