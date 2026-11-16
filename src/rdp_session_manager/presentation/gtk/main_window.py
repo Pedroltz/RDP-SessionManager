@@ -1873,7 +1873,7 @@ Would you like to continue?"""
 
             # Adicionar domínio se fornecido
             if getattr(user, "personal_mode", None) == "live":
-                cmd.append("/d:")
+                cmd.extend(["/d:", "/gfx"])
             elif domain:
                 cmd.append(f'/d:{domain}')
 
