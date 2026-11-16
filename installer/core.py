@@ -335,6 +335,20 @@ def parse_progress_fraction(message: str) -> Optional[tuple[int, int]]:
     return None
 
 
+def validate_arch_repository_channels(text: str) -> None:
+    """Reject a partial testing channel before running system upgrades."""
+    sections = set(re.findall(r"(?m)^\s*\[([^]\n]+)\]\s*$", text))
+    if 'multilib-testing' in sections and not {'core-testing', 'extra-testing'} <= sections:
+        raise InstallerError(
+            "Inconsistent Arch repositories: multilib-testing is enabled without "
+            "core-testing and extra-testing. This can select 32-bit packages whose "
+            "required 64-bit versions are unavailable (for example lib32-libffi). "
+            "Use a consistent stable or testing repository configuration before retrying. "
+            "For a stable system, disable [multilib-testing] and keep [multilib]. "
+            "No package transaction has been started."
+        )
+
+
 class Runner:
     def __init__(self, ui: UI, log: InstallLog, dry_run: bool = False) -> None:
         self.ui = ui
@@ -897,6 +911,7 @@ class Installer:
     def install_arch(self, app_path: Path) -> None:
         prefix = self.privilege()
         self.ui.stage(3, 5, "Updating Arch and installing dependencies")
+        validate_arch_repository_channels(Path("/etc/pacman.conf").read_text(encoding="utf-8"))
         self.ensure_arch_multilib()
         self.runner.run(prefix + ["pacman", "-Syu", "--needed", "--noconfirm", *self.package_names()], timeout=1800)
         self.install_arch_xrdp()

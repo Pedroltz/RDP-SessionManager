@@ -1,5 +1,9 @@
 # Changelog - RDP Session Manager
 
+## [0.7.2] - 2026-11-16
+
+- Detect inconsistent Arch testing repositories before dependency installation and explain the required correction.
+
 ## [0.7.1] - 2026-11-16
 
 - Added personal account RDP configuration and Live Desktop Sharing for supported graphical sessions.
