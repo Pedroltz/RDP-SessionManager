@@ -1528,6 +1528,17 @@ class UserManager:
             True se sucesso, False se falha
         """
         try:
+            if self._is_personal_user(username):
+                personal_meta = self._load_personal_users().get(username, {})
+                if personal_meta.get('mode') == 'live':
+                    from rdp_session_manager.infrastructure import live_desktop
+                    port = int(personal_meta.get('port', 3390))
+                    backend = personal_meta.get('backend') or None
+                    return live_desktop.update_live_credentials(
+                        username, new_password, port=port, backend=backend
+                    )
+                return False
+
             if not self.user_exists(username):
                 logger.error(f"User does not exist: {username}")
                 return False

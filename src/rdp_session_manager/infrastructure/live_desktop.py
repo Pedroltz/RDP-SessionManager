@@ -150,6 +150,7 @@ def start_live_rdp(
         ]
         if password:
             commands.append(["grdctl", "rdp", "set-credentials", username, password])
+        commands.append(["grdctl", "rdp", "disable-view-only"])
         commands.append(["grdctl", "rdp", "enable"])
         commands.append(["systemctl", "--user", "restart", "gnome-remote-desktop.service"])
         for cmd in commands:
@@ -184,6 +185,15 @@ def start_live_rdp(
 
     logger.error("Unsupported live desktop backend: %s", chosen)
     return False
+
+
+def update_live_credentials(
+    username: str,
+    password: str,
+    port: int = DEFAULT_LIVE_RDP_PORT,
+    backend: Optional[str] = None,
+) -> bool:
+    return start_live_rdp(username, port=port, password=password, backend=backend)
 
 
 def stop_live_rdp(backend: Optional[str] = None) -> bool:

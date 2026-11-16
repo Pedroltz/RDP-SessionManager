@@ -396,6 +396,28 @@ class MainWindow(Adw.ApplicationWindow):
         repair_row.set_cursor_from_name("pointer")
         if not (is_personal and personal_mode == 'live'):
             menu_box.append(repair_row)
+        else:
+            live_pwd_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            live_pwd_row.set_margin_top(6)
+            live_pwd_row.set_margin_bottom(6)
+            live_pwd_row.set_margin_start(12)
+            live_pwd_row.set_margin_end(12)
+
+            live_pwd_label = Gtk.Label(label="Change RDP Password")
+            live_pwd_label.set_halign(Gtk.Align.START)
+            live_pwd_label.set_hexpand(True)
+            live_pwd_icon = Gtk.Image.new_from_icon_name("dialog-password-symbolic")
+            live_pwd_row.append(live_pwd_label)
+            live_pwd_row.append(live_pwd_icon)
+
+            live_pwd_gesture = Gtk.GestureClick.new()
+            live_pwd_gesture.connect(
+                "released",
+                lambda g, n, x, y: self.on_change_live_password(user, popover),
+            )
+            live_pwd_row.add_controller(live_pwd_gesture)
+            live_pwd_row.set_cursor_from_name("pointer")
+            menu_box.append(live_pwd_row)
 
         # Separator
         separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
@@ -641,6 +663,42 @@ class MainWindow(Adw.ApplicationWindow):
             )
 
         dialog.connect("response", _on_response)
+        dialog.present()
+
+    def on_change_live_password(self, user, popover):
+        """Prompt for a new Live RDP password and apply it."""
+        popover.popdown()
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading=f"Change RDP Password for {user.username}",
+            body="Enter the password used to connect to your live desktop session.",
+        )
+        pwd_entry = Gtk.PasswordEntry()
+        pwd_entry.set_show_peek_icon(True)
+        pwd_entry.set_property("placeholder-text", "New RDP password")
+        dialog.set_extra_child(pwd_entry)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("save", "Save Password")
+        dialog.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("save")
+        dialog.set_close_response("cancel")
+
+        def _on_resp(_d, response):
+            if response != "save":
+                return
+            new_pwd = pwd_entry.get_text()
+            if not new_pwd:
+                self.show_toast("Password cannot be empty")
+                return
+            self._tasks.submit(
+                f"live-pwd:{user.username}",
+                lambda: self.user_manager.change_password(user.username, new_pwd),
+                lambda ok, err: self.show_toast(
+                    "Live RDP password updated" if (ok and not err) else f"Error updating password: {err or 'failed'}"
+                ),
+            )
+
+        dialog.connect("response", _on_resp)
         dialog.present()
 
     def _enable_personal_finished(self, username, user, error):
