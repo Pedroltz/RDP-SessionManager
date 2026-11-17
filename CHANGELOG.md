@@ -1,5 +1,9 @@
 # Changelog - RDP Session Manager
 
+## [0.7.3] - 2026-11-17
+
+- Corrige encerramento imediato de sessões RDP por barramento D-Bus desconectado, incluindo criação e alteração de sessões.
+
 ## [0.7.2] - 2026-11-16
 
 - Detect inconsistent Arch testing repositories before dependency installation and explain the required correction.

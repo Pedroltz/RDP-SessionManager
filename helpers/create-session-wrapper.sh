@@ -54,7 +54,11 @@ if [ -f /etc/default/keyboard ]; then
     setxkbmap -layout "\${XKBLAYOUT:-us}" -variant "\${XKBVARIANT:-}" -model "\${XKBMODEL:-pc105}" 2>/dev/null || true
 fi
 if [ -z "\${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
-    eval "\$(dbus-launch --sh-syntax --exit-with-session)"
+    if [ -S "/run/user/\$(id -u)/bus" ]; then
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/\$(id -u)/bus"
+    else
+        exec dbus-run-session -- /usr/bin/python3 "$INSTALL_ROOT/rdpsm-session.py" "\${1:-}"
+    fi
 fi
 exec /usr/bin/python3 "$INSTALL_ROOT/rdpsm-session.py" "\${1:-}"
 EOF

@@ -77,8 +77,13 @@ case "$DE_COMMAND" in
 esac
 
 # Configure D-Bus
-if [ -z "\$DBUS_SESSION_BUS_ADDRESS" ]; then
-    eval \$(dbus-launch --sh-syntax --exit-with-session)
+# Keep the session bus alive for the complete desktop/application lifetime.
+if [ -S "/run/user/\$(id -u)/bus" ]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/\$(id -u)/bus"
+elif [ "\${RDPSM_PRIVATE_BUS:-}" != 1 ]; then
+    unset DBUS_SESSION_BUS_ADDRESS
+    export RDPSM_PRIVATE_BUS=1
+    exec dbus-run-session -- /bin/bash "\$HOME/.xsession"
 fi
 
 # Configure keyboard layout (inherited from host system)
